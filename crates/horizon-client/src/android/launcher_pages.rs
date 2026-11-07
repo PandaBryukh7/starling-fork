@@ -1421,74 +1421,22 @@ impl Launcher {
                     ),
                 );
 
-                ui.text(
-                    Face::SemiBold,
-                    15.0,
-                    content_x + 22.0,
-                    card_y + 84.0,
-                    my3_text(),
-                    "Horizon Android is becoming Starling",
-                );
-                let notice = "Some Horizon Android features are still being transferred and merged. Export your worlds through Android Files (SAF) before moving.";
-                let mut line_y = card_y + 108.0;
-                let font_size = 11.5;
-                let mut line = String::new();
-                for word in notice.split_whitespace() {
-                    let candidate = if line.is_empty() {
-                        word.to_owned()
-                    } else {
-                        format!("{line} {word}")
-                    };
-                    if !line.is_empty()
-                        && ui.measure(Face::Regular, font_size, &candidate) > content_w - 44.0
-                    {
-                        ui.text(
-                            Face::Regular,
-                            font_size,
-                            content_x + 22.0,
-                            line_y,
-                            my3_muted(),
-                            &line,
-                        );
-                        line_y += 15.0;
-                        line.clear();
-                    }
-                    if !line.is_empty() {
-                        line.push(' ');
-                    }
-                    line.push_str(word);
-                }
-                if !line.is_empty() {
-                    ui.text(
-                        Face::Regular,
-                        font_size,
-                        content_x + 22.0,
-                        line_y,
-                        my3_muted(),
-                        &line,
-                    );
-                }
-                let migration_y = line_y + 24.0;
-                let migration_w = (content_w - 52.0) * 0.5;
+                let quick_y = card_y + 84.0;
+                let quick_w = (content_w - 52.0) * 0.5;
                 button(
                     &mut ui,
                     &mut self.targets,
-                    [content_x + 22.0, migration_y, migration_w, 34.0],
-                    "Download Starling",
-                    Action::StarlingDownload,
+                    [content_x + 22.0, quick_y, quick_w, 34.0],
+                    "Worlds folder",
+                    Action::WorldFiles,
                     false,
                 );
                 button(
                     &mut ui,
                     &mut self.targets,
-                    [
-                        content_x + 30.0 + migration_w,
-                        migration_y,
-                        migration_w,
-                        34.0,
-                    ],
-                    "Export worlds (SAF)",
-                    Action::WorldFiles,
+                    [content_x + 30.0 + quick_w, quick_y, quick_w, 34.0],
+                    "Game folder",
+                    Action::GameFiles,
                     false,
                 );
                 let btn_y = (h - 92.0).max(card_y + card_h + 12.0);

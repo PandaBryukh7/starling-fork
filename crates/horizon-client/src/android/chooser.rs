@@ -4,7 +4,7 @@ use super::{
     pages::{Action, button},
 };
 use crate::catalog::RendererMode;
-use horizon_client::ui_theme::{Face, Ui};
+use horizon_client::ui_theme::{Face, Icon, Ui};
 
 pub(super) enum Kind {
     Aspect,
@@ -220,13 +220,11 @@ impl Launcher {
                 ids.sort_unstable();
                 ids.dedup();
                 let next = ids.last().copied().unwrap_or(0).checked_add(1);
-                let ids_for_delete: Vec<u32> =
-                    ids.iter().copied().filter(|&id| id != 0).collect();
                 let mut choices: Vec<_> = ids
                     .into_iter()
                     .map(|id| {
                         (
-                            format!("Profile {id}"),
+                            format!("Profile {}", id.saturating_add(1)),
                             if id == 0 {
                                 "Default profile".into()
                             } else {
@@ -240,16 +238,8 @@ impl Launcher {
                 if let Some(id) = next {
                     choices.push((
                         "Create profile".into(),
-                        format!("Create Profile {id}"),
+                        format!("Create Profile {}", id.saturating_add(1)),
                         Action::ChooseProfile(id),
-                        false,
-                    ));
-                }
-                for id in ids_for_delete {
-                    choices.push((
-                        format!("Delete Profile {id}"),
-                        "Removes its saves, mods, packs and settings".into(),
-                        Action::DeleteProfile(id),
                         false,
                     ));
                 }
@@ -363,7 +353,7 @@ impl Chooser {
         Self {
             title: "Delete profile?",
             help: "Deletes all saves, mods, packs and settings of this profile. This cannot be undone.",
-            device: Some(format!("Profile {id}")),
+            device: Some(format!("Profile {}", id.saturating_add(1))),
             choices: vec![
                 (
                     "Delete".into(),
@@ -496,6 +486,20 @@ impl Chooser {
             );
             if let Some(c) = ui.clip_rect([32.0, y, w - 64.0, 74.0]) {
                 targets.push((c, *action));
+            }
+            // Non-default profiles get a trash button in the row's right corner. It is pushed
+            // after the row, and the hit test takes the last match, so it wins over the row.
+            if let Action::ChooseProfile(id) = action
+                && *id != 0
+                && self.title == "Choose profile"
+                && label.starts_with("Profile ")
+            {
+                let trash = [w - 32.0 - 14.0 - 48.0, y + 13.0, 48.0, 48.0];
+                ui.rounded(trash[0], trash[1], trash[2], trash[3], 14.0, theme.surface_bright);
+                ui.icon(Icon::Trash, trash[0] + 13.0, trash[1] + 13.0, 22.0, theme.danger);
+                if let Some(c) = ui.clip_rect(trash) {
+                    targets.push((c, Action::DeleteProfile(*id)));
+                }
             }
         }
         ui.set_clip(None);

@@ -300,6 +300,8 @@ pub(super) enum Action {
     ChooseOrientation(crate::catalog::Orientation),
     ChooseRenderer(crate::catalog::RendererMode),
     ChooseProfile(u32),
+    DeleteProfile(u32),
+    ConfirmDeleteProfile(u32),
     Dismiss,
     Immersive,
     Cutout,
@@ -6324,6 +6326,29 @@ impl Launcher {
                 self.catalog.config.profile = profile;
                 self.catalog.config.save(&self.home)?;
                 self.catalog.refresh(&self.home);
+                self.chooser = None;
+            }
+            Some(Action::DeleteProfile(profile)) => {
+                // Profile 0 is the default one and can never be deleted.
+                if profile != 0 {
+                    self.chooser = Some(super::chooser::Chooser::confirm_delete_profile(profile));
+                }
+            }
+            Some(Action::ConfirmDeleteProfile(profile)) => {
+                if profile != 0 {
+                    let dir = self
+                        .home
+                        .join("profiles")
+                        .join(format!("profile-{profile}"));
+                    if dir.is_dir() {
+                        std::fs::remove_dir_all(&dir)?;
+                    }
+                    if self.catalog.config.profile == profile {
+                        self.catalog.config.profile = 0;
+                        self.catalog.config.save(&self.home)?;
+                    }
+                    self.catalog.refresh(&self.home);
+                }
                 self.chooser = None;
             }
             Some(Action::Dismiss) => {

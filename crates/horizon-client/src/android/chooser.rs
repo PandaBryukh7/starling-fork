@@ -220,6 +220,8 @@ impl Launcher {
                 ids.sort_unstable();
                 ids.dedup();
                 let next = ids.last().copied().unwrap_or(0).checked_add(1);
+                let ids_for_delete: Vec<u32> =
+                    ids.iter().copied().filter(|&id| id != 0).collect();
                 let mut choices: Vec<_> = ids
                     .into_iter()
                     .map(|id| {
@@ -240,6 +242,14 @@ impl Launcher {
                         "Create profile".into(),
                         format!("Create Profile {id}"),
                         Action::ChooseProfile(id),
+                        false,
+                    ));
+                }
+                for id in ids_for_delete {
+                    choices.push((
+                        format!("Delete Profile {id}"),
+                        "Removes its saves, mods, packs and settings".into(),
+                        Action::DeleteProfile(id),
                         false,
                     ));
                 }
@@ -342,6 +352,23 @@ impl Chooser {
                     "Remove".into(),
                     String::new(),
                     Action::ConfirmDeleteLocal,
+                    false,
+                ),
+                ("Cancel".into(), String::new(), Action::Dismiss, true),
+            ],
+            scroll: 0.0,
+        }
+    }
+    pub(super) fn confirm_delete_profile(id: u32) -> Self {
+        Self {
+            title: "Delete profile?",
+            help: "Deletes all saves, mods, packs and settings of this profile. This cannot be undone.",
+            device: Some(format!("Profile {id}")),
+            choices: vec![
+                (
+                    "Delete".into(),
+                    String::new(),
+                    Action::ConfirmDeleteProfile(id),
                     false,
                 ),
                 ("Cancel".into(), String::new(), Action::Dismiss, true),

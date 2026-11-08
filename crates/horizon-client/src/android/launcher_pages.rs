@@ -304,6 +304,8 @@ pub(super) enum Action {
     ChooseStorage(u8),
     ChooseStorageCustom,
     DeleteProfile(u32),
+    NewProfile,
+    ConfirmNewProfile(u32),
     RenameProfile(u32),
     ConfirmRenameProfile(u32),
     CopyProfile(u32),
@@ -456,9 +458,20 @@ pub(super) fn button(
     } else {
         15.0
     };
-    let fitted = ui.fit_text(Face::Medium, font, label, (w - 2.0 * padding).max(16.0));
+    // A trailing " v" marks a drop-down: it is drawn as a chevron icon instead of the letter.
+    let (shown, chevron) = match label.strip_suffix(" v") {
+        Some(text) => (text, true),
+        None => (label, false),
+    };
+    let reserve = if chevron { 22.0 } else { 0.0 };
+    let fitted = ui.fit_text(
+        Face::Medium,
+        font,
+        shown,
+        (w - 2.0 * padding - reserve).max(16.0),
+    );
     let text_w = ui.measure(Face::Medium, font, &fitted);
-    let left_align = matches!(action, Action::Field(_)) || label.ends_with(" v");
+    let left_align = matches!(action, Action::Field(_)) || chevron;
     let tx = if left_align {
         x + padding
     } else {
@@ -473,6 +486,16 @@ pub(super) fn button(
         if accent { my3_on_accent() } else { my3_text() },
         &fitted,
     );
+    if chevron {
+        let colour = if accent { my3_on_accent() } else { my3_muted() };
+        ui.icon(
+            Icon::ChevronDown,
+            x + w - padding - 16.0,
+            y + (h - 16.0) * 0.5,
+            16.0,
+            colour,
+        );
+    }
     if let Some(c) = ui.clip_rect(rect) {
         targets.push((c, action));
     }
@@ -1015,21 +1038,26 @@ impl Launcher {
     /// Copies a profile into a new one named "<name> copy" (numbered when that is taken).
     fn begin_profile_copy(&mut self, profile: u32) {
         let config = &self.catalog.config;
-        let base = format!("{} copy", config.profile_name(profile));
-        let name = (1..)
-            .map(|n| {
-                if n == 1 {
-                    base.clone()
-                } else {
-                    format!("{base} {n}")
-                }
-            })
-            .find(|candidate| {
-                candidate.chars().count() <= 24
-                    && config
-                        .check_profile_name(&self.home, None, candidate)
-                        .is_ok()
-            });
+        // Like Windows: "Name" copies to "Name (1)", then "Name (2)"; a copy of "Name (1)"
+        // continues the numbering.
+        let source = config.profile_name(profile);
+        let stem = match source.strip_suffix(')').and_then(|t| t.rsplit_once(" (")) {
+            Some((stem, digits))
+                if !stem.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) =>
+            {
+                stem.to_owned()
+            }
+            _ => source.clone(),
+        };
+        let name = (1..).find_map(|n| {
+            let suffix = format!(" ({n})");
+            let room = 24usize.saturating_sub(suffix.chars().count());
+            let candidate = format!("{}{suffix}", stem.chars().take(room).collect::<String>());
+            config
+                .check_profile_name(&self.home, None, &candidate)
+                .is_ok()
+                .then_some(candidate)
+        });
         let Some(name) = name else {
             self.catalog.status = "Rename the profile to a shorter name before copying it.".into();
             return;
@@ -2082,6 +2110,7 @@ impl Launcher {
                     Some("instance_name") => &self.catalog.instance_input,
                     _ => &self.catalog.storage_input,
                 },
+                ime_top_dp,
             );
             self.list_targets = chooser.navigation(ui.w);
             self.list_view = Some(chooser.viewport(ui.h));
@@ -6499,6 +6528,47 @@ impl Launcher {
                 self.catalog.config.save(&self.home)?;
                 self.catalog.refresh(&self.home);
                 self.chooser = None;
+            }
+            Some(Action::NewProfile) => {
+                let id = self.catalog.config.next_profile_id(&self.home);
+                let name = (id.saturating_add(1)..)
+                    .map(|n| format!("Profile {n}"))
+                    .find(|candidate| {
+                        self.catalog
+                            .config
+                            .check_profile_name(&self.home, None, candidate)
+                            .is_ok()
+                    })
+                    .unwrap_or_default();
+                self.catalog.instance_input = name;
+                self.chooser = Some(super::chooser::Chooser::new_profile(id));
+            }
+            Some(Action::ConfirmNewProfile(id)) => {
+                crate::platform::hide();
+                self.catalog.editing = None;
+                let name = self.catalog.instance_input.trim().to_owned();
+                match self
+                    .catalog
+                    .config
+                    .check_profile_name(&self.home, None, &name)
+                {
+                    Ok(folder) => {
+                        self.catalog.config.profile_names.insert(id, name);
+                        if self.catalog.config.external_root().is_some() {
+                            self.catalog.config.profile_folders.insert(id, folder);
+                        }
+                        std::fs::create_dir_all(self.catalog.config.game_home_for(&self.home, id))?;
+                        self.catalog.config.profile = id;
+                        self.catalog.config.save(&self.home)?;
+                        self.catalog.refresh(&self.home);
+                        self.chooser = None;
+                    }
+                    Err(error) => {
+                        if let Some(chooser) = &mut self.chooser {
+                            chooser.note(error);
+                        }
+                    }
+                }
             }
             Some(Action::RenameProfile(profile)) => {
                 let name = self.catalog.config.profile_name(profile);

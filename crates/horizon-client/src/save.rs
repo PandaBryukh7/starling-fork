@@ -160,6 +160,22 @@ impl SessionLock {
         let locked = rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive);
         #[cfg(not(target_os = "android"))]
         let locked = file.try_lock();
+        #[cfg(target_os = "android")]
+        if let Err(error) = locked {
+            // Only a lock another process holds means "already open". Shared storage (the FUSE
+            // mount under /storage/emulated) may not support flock at all; the world then opens
+            // without the cross-instance lock rather than not at all.
+            if error == rustix::io::Errno::WOULDBLOCK {
+                return Err(
+                    format!("{} is already open in another instance", world.display()).into(),
+                );
+            }
+            log::warn!(
+                "{}: session lock unsupported here: {error}",
+                world.display()
+            );
+        }
+        #[cfg(not(target_os = "android"))]
         locked.map_err(|_| format!("{} is already open in another instance", world.display()))?;
         file.set_len(0)?;
         file.write_all(&[0x26, 0x03])?;

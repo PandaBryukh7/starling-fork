@@ -232,8 +232,8 @@ impl Launcher {
                 if let Some(id) = next {
                     choices.push((
                         "Create profile".into(),
-                        format!("Create Profile {}", id.saturating_add(1)),
-                        Action::ChooseProfile(id),
+                        "Choose a name for a new profile".into(),
+                        Action::NewProfile,
                         false,
                     ));
                 }
@@ -372,6 +372,21 @@ impl Chooser {
             scroll: 0.0,
         }
     }
+    pub(super) fn new_profile(id: u32) -> Self {
+        Self {
+            form: Some(Form {
+                hint: "Profile name (up to 24 characters)",
+                field: "instance_name",
+                button: "Create",
+                action: Action::ConfirmNewProfile(id),
+            }),
+            title: "New profile",
+            help: "Name the new profile. It starts empty, with its own saves, mods and packs.",
+            device: None,
+            choices: Vec::new(),
+            scroll: 0.0,
+        }
+    }
     pub(super) fn rename_profile(id: u32, current: String) -> Self {
         Self {
             form: Some(Form {
@@ -450,8 +465,16 @@ impl Chooser {
         targets: &mut Vec<([f32; 4], Action)>,
         modal_anim: f32,
         input: &str,
+        ime_top: Option<f32>,
     ) {
         let (w, h) = (ui.w, ui.h);
+        // With the soft keyboard up, the field and buttons rise above it so the text typed
+        // stays visible; the list gives up the room.
+        let lift = if self.form.is_some() {
+            ime_top.map_or(0.0, |ime| (h - 30.0 - (ime - 8.0)).max(0.0))
+        } else {
+            0.0
+        };
         let theme = horizon_client::ui_theme::active_theme();
         let slide = (1.0 - modal_anim.clamp(0.0, 1.0)) * 16.0;
         targets.clear();
@@ -477,7 +500,7 @@ impl Chooser {
         }
         let top = 132.0 + slide;
         let bottom = if self.custom_folder() {
-            h - 166.0
+            (h - 166.0 - lift).max(180.0)
         } else {
             h - 94.0
         };
@@ -610,7 +633,7 @@ impl Chooser {
         }
         ui.set_clip(None);
         if let Some(form) = &self.form {
-            let field = [32.0, h - 148.0, w - 64.0, 56.0];
+            let field = [32.0, h - 148.0 - lift, w - 64.0, 56.0];
             ui.rounded(field[0], field[1], field[2], field[3], 14.0, theme.surface);
             ui.stroke_rounded(
                 field[0],
@@ -647,7 +670,7 @@ impl Chooser {
             button(
                 ui,
                 targets,
-                [208.0, h - 74.0, 240.0, 44.0],
+                [208.0, h - 74.0 - lift, 240.0, 44.0],
                 form.button,
                 form.action,
                 true,
@@ -656,7 +679,7 @@ impl Chooser {
         button(
             ui,
             targets,
-            [32.0, h - 74.0, 160.0, 44.0],
+            [32.0, h - 74.0 - lift, 160.0, 44.0],
             "Cancel",
             Action::Dismiss,
             false,

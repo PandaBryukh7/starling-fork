@@ -300,6 +300,8 @@ pub(super) enum Action {
     ChooseOrientation(crate::catalog::Orientation),
     ChooseRenderer(crate::catalog::RendererMode),
     ChooseProfile(u32),
+    StorageFolder,
+    ChooseStorage(u8),
     DeleteProfile(u32),
     ConfirmDeleteProfile(u32),
     Dismiss,
@@ -1800,7 +1802,9 @@ impl Launcher {
                 let rich_summary = if crate::catalog::source_only_mod(p) {
                     "Native .hnmod temporarily unsupported on Android; built-in mods are available."
                 } else {
-                    self.catalog.enriched_summaries.get(&p.id)
+                    self.catalog
+                        .enriched_summaries
+                        .get(&p.id)
                         .map_or(p.summary.as_str(), String::as_str)
                 };
                 let summary = ui.fit_text(Face::Regular, 12.5, rich_summary, text_max);
@@ -4159,6 +4163,11 @@ impl Launcher {
                         },
                     ),
                     (
+                        "Game data folder",
+                        "Where worlds, mods, packs and shaders are kept",
+                        SettingControl::Button("Choose folder", Action::StorageFolder, false),
+                    ),
+                    (
                         "Open game & world folders",
                         "Manage saves, resource packs and mods in Android Files",
                         SettingControl::Button("Open Files", Action::GameFiles, false),
@@ -5905,6 +5914,59 @@ impl Launcher {
                         "Open github.com/JuanLuci/starling/releases to download Starling.".into();
                 }
             }
+            Some(Action::StorageFolder) => self.open_chooser(chooser::Kind::Storage),
+            Some(Action::ChooseStorage(index)) => {
+                self.chooser = None;
+                if index == 0 {
+                    self.catalog.config.storage_root = None;
+                    self.catalog.config.storage_prompted = true;
+                    self.catalog.config.save(&self.home)?;
+                    self.catalog.refresh(&self.home);
+                    self.catalog.status = "Game data is kept in private app storage.".into();
+                } else if let Some((path, _)) =
+                    crate::catalog::STORAGE_PRESETS.get(usize::from(index) - 1)
+                {
+                    if !crate::platform::all_files_access() {
+                        self.catalog.status = if crate::platform::request_all_files_access() {
+                            "Allow \"All files access\" for this app, come back and choose the folder again."
+                        } else {
+                            "Grant this app \"All files access\" in Android settings, then choose the folder again."
+                        }
+                        .into();
+                    } else {
+                        let old = self.catalog.config.game_home(&self.home);
+                        std::fs::create_dir_all(path)?;
+                        self.catalog.config.storage_root = Some((*path).to_owned());
+                        self.catalog.config.storage_prompted = true;
+                        let new = self.catalog.config.game_home(&self.home);
+                        let copied = crate::catalog::copy_game_data(&old, &new);
+                        self.catalog.config.save(&self.home)?;
+                        self.catalog.refresh(&self.home);
+                        self.catalog.status = match copied {
+                            Ok(()) => format!(
+                                "Game data folder: {path}. Existing worlds, mods and packs were copied; the old private copy is kept."
+                            ),
+                            Err(error) => format!(
+                                "Game data folder set to {path}, but copying failed: {error}"
+                            ),
+                        };
+                    }
+                }
+            }
+            Some(Action::GameFiles) if self.catalog.config.external_root().is_some() => {
+                let root = self.catalog.config.game_home(&self.home);
+                self.catalog.status = format!(
+                    "Game data is in {}. Open it in any file manager.",
+                    root.display()
+                );
+            }
+            Some(Action::WorldFiles) if self.catalog.config.external_root().is_some() => {
+                let root = self.catalog.config.game_home(&self.home).join("saves");
+                self.catalog.status = format!(
+                    "Worlds are in {}. Copy world folders while the game is closed.",
+                    root.display()
+                );
+            }
             Some(Action::GameFiles) => {
                 self.catalog.status = if crate::platform::open_documents(crate::document_store::ROOT) {
                     "Game files opened. Worlds, mods, packs, shaders and reports are available here."
@@ -6264,13 +6326,7 @@ impl Launcher {
                 self.chooser = None;
             }
             Some(Action::ChooseProfile(profile)) => {
-                std::fs::create_dir_all(if profile == 0 {
-                    self.home.clone()
-                } else {
-                    self.home
-                        .join("profiles")
-                        .join(format!("profile-{profile}"))
-                })?;
+                std::fs::create_dir_all(self.catalog.config.game_home_for(&self.home, profile))?;
                 self.catalog.config.profile = profile;
                 self.catalog.config.save(&self.home)?;
                 self.catalog.refresh(&self.home);
@@ -6284,10 +6340,7 @@ impl Launcher {
             }
             Some(Action::ConfirmDeleteProfile(profile)) => {
                 if profile != 0 {
-                    let dir = self
-                        .home
-                        .join("profiles")
-                        .join(format!("profile-{profile}"));
+                    let dir = self.catalog.config.game_home_for(&self.home, profile);
                     if dir.is_dir() {
                         std::fs::remove_dir_all(&dir)?;
                     }

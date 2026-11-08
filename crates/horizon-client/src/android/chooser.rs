@@ -14,6 +14,7 @@ pub(super) enum Kind {
     Renderer,
     RenderScale,
     Profile,
+    Storage,
     Orientation,
     InputHost,
     UiScale,
@@ -202,23 +203,7 @@ impl Launcher {
                 ],
             ),
             Kind::Profile => {
-                let mut ids = vec![0, c.profile];
-                ids.extend(
-                    std::fs::read_dir(self.home.join("profiles"))
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .filter(|e| e.path().is_dir())
-                        .filter_map(|e| {
-                            e.file_name()
-                                .to_str()?
-                                .strip_prefix("profile-")?
-                                .parse::<u32>()
-                                .ok()
-                        }),
-                );
-                ids.sort_unstable();
-                ids.dedup();
+                let ids = c.profile_ids(&self.home);
                 let next = ids.last().copied().unwrap_or(0).checked_add(1);
                 let mut choices: Vec<_> = ids
                     .into_iter()
@@ -246,6 +231,27 @@ impl Launcher {
                 (
                     "Choose profile",
                     "Each profile keeps its own game settings and saves.",
+                    choices,
+                )
+            }
+            Kind::Storage => {
+                let mut choices: Vec<(String, String, Action, bool)> = vec![(
+                    "App storage (private)".into(),
+                    "Hidden from other apps and file managers. Default.".into(),
+                    Action::ChooseStorage(0),
+                    c.storage_root.is_none(),
+                )];
+                for (i, (path, label)) in crate::catalog::STORAGE_PRESETS.iter().enumerate() {
+                    choices.push((
+                        (*label).into(),
+                        format!("{path}  -  visible in any file manager"),
+                        Action::ChooseStorage(i as u8 + 1),
+                        c.storage_root.as_deref() == Some(*path),
+                    ));
+                }
+                (
+                    "Game data folder",
+                    "Worlds, mods, packs, shaders and settings. Game files from Mojang stay private.",
                     choices,
                 )
             }
@@ -495,8 +501,21 @@ impl Chooser {
                 && label.starts_with("Profile ")
             {
                 let trash = [w - 32.0 - 14.0 - 48.0, y + 13.0, 48.0, 48.0];
-                ui.rounded(trash[0], trash[1], trash[2], trash[3], 14.0, theme.surface_bright);
-                ui.icon(Icon::Trash, trash[0] + 13.0, trash[1] + 13.0, 22.0, theme.danger);
+                ui.rounded(
+                    trash[0],
+                    trash[1],
+                    trash[2],
+                    trash[3],
+                    14.0,
+                    theme.surface_bright,
+                );
+                ui.icon(
+                    Icon::Trash,
+                    trash[0] + 13.0,
+                    trash[1] + 13.0,
+                    22.0,
+                    theme.danger,
+                );
                 if let Some(c) = ui.clip_rect(trash) {
                     targets.push((c, Action::DeleteProfile(*id)));
                 }

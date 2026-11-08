@@ -105,3 +105,14 @@ sky and adds two post-processing passes; it is a functional example, not an
 Android performance benchmark.
 
 The Horizon catalog also lists source-only `.hnmod` mods so their availability is visible. These require rebuilding the game and cannot be installed into the current Android client; the list marks them as unsupported. `.hmod` file and HTTPS imports remain available.
+
+## Game data folder
+
+On first launch, and later in **Settings → Game data folder**, you choose where worlds,
+mods, resource packs, shaders and settings are kept: private app storage (default) or a
+folder in shared storage (`/storage/emulated/0/Starling` or `.../Documents/Starling`) that
+any file manager can open. Shared storage needs Android's **All files access** for the app;
+the launcher opens that settings page when it is missing. Each profile gets its own
+`profile-N` folder there. Existing data is copied (the private copy stays), nothing is
+overwritten. Mojang's game files, accounts and session tokens always stay private. Shared
+storage is slower than app storage on most phones.

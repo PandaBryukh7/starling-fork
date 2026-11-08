@@ -341,6 +341,65 @@ pub fn open_documents(id: &str) -> bool {
     })
     .is_some()
 }
+/// Whether the app may use shared storage freely ("All files access", Android 11+).
+pub fn all_files_access() -> bool {
+    with_context(|env, _| {
+        env.call_static_method(
+            "android/os/Environment",
+            "isExternalStorageManager",
+            "()Z",
+            &[],
+        )?
+        .z()
+    })
+    .unwrap_or(false)
+}
+/// Opens the system page where the person grants "All files access" to this app.
+pub fn request_all_files_access() -> bool {
+    let open = |action: &str, with_package: bool| {
+        with_context(|env, activity| {
+            let action = JObject::from(env.new_string(action)?);
+            let intent = if with_package {
+                let package = env
+                    .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
+                    .l()?;
+                let package: String = env.get_string((&package).into())?.into();
+                let address = JObject::from(env.new_string(format!("package:{package}"))?);
+                let uri = env
+                    .call_static_method(
+                        "android/net/Uri",
+                        "parse",
+                        "(Ljava/lang/String;)Landroid/net/Uri;",
+                        &[JValue::Object(&address)],
+                    )?
+                    .l()?;
+                env.new_object(
+                    "android/content/Intent",
+                    "(Ljava/lang/String;Landroid/net/Uri;)V",
+                    &[JValue::Object(&action), JValue::Object(&uri)],
+                )?
+            } else {
+                env.new_object(
+                    "android/content/Intent",
+                    "(Ljava/lang/String;)V",
+                    &[JValue::Object(&action)],
+                )?
+            };
+            env.call_method(
+                activity,
+                "startActivity",
+                "(Landroid/content/Intent;)V",
+                &[JValue::Object(&intent)],
+            )?;
+            Ok(())
+        })
+        .is_some()
+    };
+    open(
+        "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION",
+        true,
+    ) || open("android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION", false)
+}
 pub fn open_url(url: &str) -> bool {
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return false;

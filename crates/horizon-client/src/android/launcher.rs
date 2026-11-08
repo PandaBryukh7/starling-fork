@@ -178,7 +178,8 @@ impl Launcher {
         // Pre-warm Microsoft session in background at startup so pressing Play doesn't stall.
         let prewarm_session_worker = if crate::account::Accounts::load().selected().is_some() {
             let id = catalog.config.microsoft_client_id.clone();
-            let game_home = catalog.config.game_home(&home);
+            // Account tokens never go to the (possibly shared) game folder.
+            let home_sessions = home.join("sessions");
             let wardrobe_home = home.join("wardrobe");
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
@@ -187,11 +188,8 @@ impl Launcher {
                         .ok_or("The selected account changed. Choose Play again.")?;
                     let appearance = crate::skins::cloud::fetch(&account, &secrets, &wardrobe_home)
                         .unwrap_or_default();
-                    let file = crate::account::write_session_file(
-                        &game_home.join("sessions"),
-                        &account,
-                        &secrets,
-                    )?;
+                    let file =
+                        crate::account::write_session_file(&home_sessions, &account, &secrets)?;
                     Ok(PreparedAccount {
                         key: account.key(),
                         file,
@@ -212,7 +210,7 @@ impl Launcher {
         // the account pill must have the real face instantly, not after a page visit.
         let mut wardrobe = wardrobe::Wardrobe::new(&home);
         wardrobe.open(&catalog.config.name, &catalog.config.microsoft_client_id);
-        Self {
+        let mut launcher = Self {
             wardrobe,
             home,
             controller_edges: Default::default(),
@@ -250,7 +248,14 @@ impl Launcher {
             diagnostics_modal_open: false,
             focus: None,
             diagnostic_export: None,
+        };
+        // First run: let the person choose where game data lives.
+        if !launcher.catalog.config.storage_prompted {
+            launcher.catalog.config.storage_prompted = true;
+            let _ = launcher.catalog.config.save(&launcher.home);
+            launcher.open_chooser(chooser::Kind::Storage);
         }
+        launcher
     }
 
     fn restore_launcher(&mut self, events: &ActiveEventLoop) {
@@ -462,10 +467,10 @@ impl Launcher {
                 self.launching = true;
                 self.error = None;
                 self.catalog.status = "Launching Minecraft 26.3...".into();
-                let game_home = self.catalog.config.game_home(&self.home);
                 if !self.session_ready && crate::account::Accounts::load().selected().is_some() {
                     let id = self.catalog.config.microsoft_client_id.clone();
                     let wardrobe_home = self.home.join("wardrobe");
+                    let home_sessions = self.home.join("sessions");
                     let (sender, receiver) = mpsc::channel();
                     self.session_worker = Some(receiver);
                     self.catalog.status = "Preparing account session and appearance...".into();
@@ -477,7 +482,7 @@ impl Launcher {
                                 crate::skins::cloud::fetch(&account, &secrets, &wardrobe_home)
                                     .unwrap_or_default();
                             let file = crate::account::write_session_file(
-                                &game_home.join("sessions"),
+                                &home_sessions,
                                 &account,
                                 &secrets,
                             )?;
@@ -535,6 +540,7 @@ impl Launcher {
             if !self.session_ready && crate::account::Accounts::load().selected().is_some() {
                 let id = self.catalog.config.microsoft_client_id.clone();
                 let wardrobe_home = self.home.join("wardrobe");
+                let home_sessions = self.home.join("sessions");
                 let (sender, receiver) = mpsc::channel();
                 self.session_worker = Some(receiver);
                 self.catalog.status = "Preparing account session and appearance...".into();
@@ -545,11 +551,8 @@ impl Launcher {
                         let appearance =
                             crate::skins::cloud::fetch(&account, &secrets, &wardrobe_home)
                                 .unwrap_or_default();
-                        let file = crate::account::write_session_file(
-                            &game_home.join("sessions"),
-                            &account,
-                            &secrets,
-                        )?;
+                        let file =
+                            crate::account::write_session_file(&home_sessions, &account, &secrets)?;
                         Ok(PreparedAccount {
                             key: account.key(),
                             file,

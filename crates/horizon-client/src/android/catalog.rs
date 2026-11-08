@@ -56,10 +56,70 @@ impl RendererMode {
     }
 }
 
+/// Folders offered for shared game data: (path, label).
+pub const STORAGE_PRESETS: [(&str, &str); 2] = [
+    (
+        "/storage/emulated/0/Starling",
+        "Internal storage / Starling",
+    ),
+    (
+        "/storage/emulated/0/Documents/Starling",
+        "Internal storage / Documents / Starling",
+    ),
+];
+
+/// Files and folders that make up a profile's game data. Account files never belong here.
+const GAME_DATA: [&str; 10] = [
+    "saves",
+    "horizon-mods",
+    "resourcepacks",
+    "shaderpacks",
+    "controls",
+    "screenshots",
+    "options.txt",
+    "horizon-graphics.txt",
+    "horizon-touch.json",
+    "horizon-keypad.json",
+];
+
+fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(from, to)?;
+    }
+    Ok(())
+}
+
+/// Copies game data into a new location without overwriting anything already there.
+/// The source is left untouched.
+pub fn copy_game_data(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+    for name in GAME_DATA {
+        let (src, dst) = (from.join(name), to.join(name));
+        if src.exists() && !dst.exists() {
+            copy_recursive(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub profile: u32,
+    /// Shared folder that holds every profile's game data (worlds, mods, packs, shaders,
+    /// settings). `None` keeps everything in the app's private storage.
+    pub storage_root: Option<String>,
+    /// The first-run storage question has been shown.
+    pub storage_prompted: bool,
     pub proxy: Option<String>,
     pub name: String,
     pub server: String,
@@ -204,9 +264,49 @@ impl Config {
                 .join(format!("profile-{}", self.profile))
         }
     }
+    /// The shared game-data folder, when one is chosen and currently usable.
+    pub fn external_root(&self) -> Option<PathBuf> {
+        let root = PathBuf::from(self.storage_root.as_deref()?);
+        (root.is_absolute() && root.is_dir()).then_some(root)
+    }
     pub fn game_home(&self, home: &Path) -> PathBuf {
-        // Legacy modpack selections are ignored; their files remain untouched.
-        self.profile_home(home)
+        self.game_home_for(home, self.profile)
+    }
+    pub fn game_home_for(&self, home: &Path, profile: u32) -> PathBuf {
+        match self.external_root() {
+            Some(root) => root.join(format!("profile-{}", profile.saturating_add(1))),
+            None => {
+                // Legacy modpack selections are ignored; their files remain untouched.
+                if profile == 0 {
+                    home.into()
+                } else {
+                    home.join("profiles").join(format!("profile-{profile}"))
+                }
+            }
+        }
+    }
+    /// Every profile that exists in the current storage location, plus the default and the
+    /// selected one.
+    pub fn profile_ids(&self, home: &Path) -> Vec<u32> {
+        let mut ids = vec![0, self.profile];
+        let (dir, prefix, offset) = match self.external_root() {
+            Some(root) => (root, "profile-", 1),
+            None => (home.join("profiles"), "profile-", 0),
+        };
+        ids.extend(
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| {
+                    let number: u32 = e.file_name().to_str()?.strip_prefix(prefix)?.parse().ok()?;
+                    number.checked_sub(offset)
+                }),
+        );
+        ids.sort_unstable();
+        ids.dedup();
+        ids
     }
     pub fn touch_name_changed(&mut self) {
         let secs = std::time::SystemTime::now()

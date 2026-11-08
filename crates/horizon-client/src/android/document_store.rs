@@ -610,6 +610,16 @@ pub fn validate_entry_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The folder a path is checked from: the private home, or the profile's own folder when the
+/// game data lives in shared storage outside it.
+fn symlink_base<'a>(home: &'a Path, profile_root: &'a Path, target: &Path) -> &'a Path {
+    if target.starts_with(home) {
+        home
+    } else {
+        profile_root
+    }
+}
+
 fn verify_no_symlinks(home: &Path, target: &Path) -> Result<(), String> {
     let rel = target
         .strip_prefix(home)
@@ -641,7 +651,7 @@ fn verify_no_symlinks(home: &Path, target: &Path) -> Result<(), String> {
 }
 
 pub fn resolve_fm_path(home: &Path, profile_root: &Path, rel: &str) -> Result<PathBuf, String> {
-    verify_no_symlinks(home, profile_root)?;
+    verify_no_symlinks(symlink_base(home, profile_root, profile_root), profile_root)?;
     let clean = rel.trim().trim_matches('/');
     if clean.is_empty() {
         return Ok(profile_root.to_path_buf());
@@ -658,7 +668,7 @@ pub fn resolve_fm_path(home: &Path, profile_root: &Path, rel: &str) -> Result<Pa
         validate_entry_name(seg)?;
         path.push(seg);
     }
-    verify_no_symlinks(home, &path)?;
+    verify_no_symlinks(symlink_base(home, profile_root, &path), &path)?;
     Ok(path)
 }
 
@@ -1008,7 +1018,7 @@ pub fn fm_paste(
     }
     let mut count = 0usize;
     for src in sources {
-        verify_no_symlinks(home, src)?;
+        verify_no_symlinks(symlink_base(home, profile_root, src), src)?;
         let src_meta = fs::symlink_metadata(src).map_err(|e| e.to_string())?;
         if src_meta.file_type().is_symlink() {
             return Err("Refusing to copy or move symbolic links.".into());

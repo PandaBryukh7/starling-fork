@@ -302,6 +302,7 @@ pub(super) enum Action {
     ChooseProfile(u32),
     StorageFolder,
     ChooseStorage(u8),
+    ChooseStorageCustom,
     DeleteProfile(u32),
     ConfirmDeleteProfile(u32),
     Dismiss,
@@ -986,6 +987,54 @@ fn draw_my3_progress_view(
 }
 
 impl Launcher {
+    /// Starts copying the current game data into `path`; the folder is switched when the copy
+    /// finishes (see `poll_storage_job`).
+    fn begin_storage_move(&mut self, path: String) {
+        if !crate::platform::all_files_access() {
+            self.catalog.status = if crate::platform::request_all_files_access() {
+                "Allow \"All files access\" for this app, come back and choose the folder again."
+            } else {
+                "Grant this app \"All files access\" in Android settings, then choose the folder again."
+            }
+            .into();
+            return;
+        }
+        if let Err(error) = std::fs::create_dir_all(&path) {
+            self.catalog.status = format!("Cannot use {path}: {error}");
+            return;
+        }
+        let old = self.catalog.config.game_home(&self.home);
+        let mut next = self.catalog.config.clone();
+        next.storage_root = Some(path.clone());
+        let new = next.game_home(&self.home);
+        self.storage_job = Some(crate::catalog::spawn_copy(old, new, path));
+    }
+    pub(super) fn poll_storage_job(&mut self) {
+        let Some(job) = self.storage_job.clone() else {
+            return;
+        };
+        let Some(result) = job.result.lock().ok().and_then(|mut slot| slot.take()) else {
+            return;
+        };
+        self.storage_job = None;
+        self.catalog.status = match result {
+            Ok(()) => {
+                self.catalog.config.storage_root = Some(job.target.clone());
+                self.catalog.config.storage_prompted = true;
+                match self.catalog.config.save(&self.home) {
+                    Ok(()) => {
+                        self.catalog.refresh(&self.home);
+                        format!(
+                            "Game data folder: {}. Existing worlds, mods and packs were copied; the old private copy is kept.",
+                            job.target
+                        )
+                    }
+                    Err(error) => format!("Cannot save the folder choice: {error}"),
+                }
+            }
+            Err(error) => format!("Copying failed: {error}. The game data folder was not changed."),
+        };
+    }
     /// The same spatial focus algorithm as the game's controller menus.
     pub(super) fn navigate(&mut self, key: &KeyEvent) -> bool {
         self.navigate_key(&key.logical_key)
@@ -1963,7 +2012,12 @@ impl Launcher {
             );
         }
         if let Some(chooser) = &mut self.chooser {
-            chooser.draw(&mut ui, &mut self.targets, self.anim.modal_anim);
+            chooser.draw(
+                &mut ui,
+                &mut self.targets,
+                self.anim.modal_anim,
+                &self.catalog.storage_input,
+            );
             self.list_targets = chooser.navigation(ui.w);
             self.list_view = Some(chooser.viewport(ui.h));
         }
@@ -1981,6 +2035,59 @@ impl Launcher {
             let y = top + (height - thumb) * (scroll / maximum).clamp(0.0, 1.0);
             ui.rounded(w - 10.0, top, 4.0, height, 2.0, my3_border());
             ui.rounded(w - 10.0, y, 4.0, thumb, 2.0, my3_muted());
+        }
+        if let Some(job) = &self.storage_job {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.targets.clear();
+            self.list_targets.clear();
+            self.list_view = None;
+            let (done, total) = (job.done.load(Relaxed), job.total.load(Relaxed));
+            ui.rounded(0.0, 0.0, w, h, 0.0, horizon_client::hud::rgba(0, 0, 0, 180));
+            let width = (w - 32.0).min(380.0);
+            let x = (w - width) * 0.5;
+            let y = (h - 150.0) * 0.5;
+            ui.rounded(x, y, width, 150.0, 20.0, my3_surface());
+            ui.border(x, y, width, 150.0, 20.0, my3_border());
+            ui.text(
+                Face::SemiBold,
+                20.0,
+                x + 22.0,
+                y + 22.0,
+                my3_text(),
+                "Copying game data...",
+            );
+            let mib = |bytes: u64| bytes as f32 / 1_048_576.0;
+            let line = if total == 0 {
+                "Preparing...".to_owned()
+            } else {
+                format!("{:.0} MB of {:.0} MB", mib(done), mib(total))
+            };
+            ui.text(Face::Regular, 14.0, x + 22.0, y + 60.0, my3_muted(), &line);
+            let bar_w = width - 44.0;
+            ui.rounded(x + 22.0, y + 96.0, bar_w, 8.0, 4.0, my3_track());
+            let fraction = if total == 0 {
+                0.0
+            } else {
+                (done as f32 / total as f32).clamp(0.0, 1.0)
+            };
+            if fraction > 0.0 {
+                ui.rounded(
+                    x + 22.0,
+                    y + 96.0,
+                    (bar_w * fraction).max(8.0),
+                    8.0,
+                    4.0,
+                    my3_accent(),
+                );
+            }
+            ui.text(
+                Face::Regular,
+                12.0,
+                x + 22.0,
+                y + 114.0,
+                my3_muted(),
+                "Keep the app open until this finishes.",
+            );
         }
         if self.catalog.fm_modal.is_some() {
             self.draw_fm_modal(&mut ui, w, h, ime_top_dp);
@@ -4056,7 +4163,7 @@ impl Launcher {
             }
             SettingsCategory::Launcher => {
                 let c = &self.catalog.config;
-                let count = 12;
+                let count = 13;
                 let extra_ime = if ime_top_dp.is_some() { 180.0 } else { 0.0 };
                 let max_scroll =
                     (count as f32 * step_y + extra_ime - (list_bottom - list_top)).max(0.0);
@@ -4093,7 +4200,7 @@ impl Launcher {
                 };
                 let game_anim_off = c.disable_game_animations || touch_cfg.disable_game_animations;
 
-                let rows: [(&str, &str, SettingControl<'_>); 12] = [
+                let rows: [(&str, &str, SettingControl<'_>); 13] = [
                     (
                         "APPEARANCE, DPI SCALING & MOTION",
                         "Material 3 Expressive theme studio, adaptive phone DPI scaling & animation toggles",
@@ -5916,8 +6023,8 @@ impl Launcher {
             }
             Some(Action::StorageFolder) => self.open_chooser(chooser::Kind::Storage),
             Some(Action::ChooseStorage(index)) => {
-                self.chooser = None;
                 if index == 0 {
+                    self.chooser = None;
                     self.catalog.config.storage_root = None;
                     self.catalog.config.storage_prompted = true;
                     self.catalog.config.save(&self.home)?;
@@ -5926,31 +6033,25 @@ impl Launcher {
                 } else if let Some((path, _)) =
                     crate::catalog::STORAGE_PRESETS.get(usize::from(index) - 1)
                 {
-                    if !crate::platform::all_files_access() {
-                        self.catalog.status = if crate::platform::request_all_files_access() {
-                            "Allow \"All files access\" for this app, come back and choose the folder again."
-                        } else {
-                            "Grant this app \"All files access\" in Android settings, then choose the folder again."
-                        }
-                        .into();
-                    } else {
-                        let old = self.catalog.config.game_home(&self.home);
-                        std::fs::create_dir_all(path)?;
-                        self.catalog.config.storage_root = Some((*path).to_owned());
-                        self.catalog.config.storage_prompted = true;
-                        let new = self.catalog.config.game_home(&self.home);
-                        let copied = crate::catalog::copy_game_data(&old, &new);
-                        self.catalog.config.save(&self.home)?;
-                        self.catalog.refresh(&self.home);
-                        self.catalog.status = match copied {
-                            Ok(()) => format!(
-                                "Game data folder: {path}. Existing worlds, mods and packs were copied; the old private copy is kept."
-                            ),
-                            Err(error) => format!(
-                                "Game data folder set to {path}, but copying failed: {error}"
-                            ),
-                        };
-                    }
+                    self.chooser = None;
+                    self.begin_storage_move((*path).to_owned());
+                }
+            }
+            Some(Action::ChooseStorageCustom) => {
+                let path = self
+                    .catalog
+                    .storage_input
+                    .trim()
+                    .trim_end_matches('/')
+                    .to_owned();
+                crate::platform::hide();
+                self.catalog.editing = None;
+                if path.len() < 2 || !path.starts_with('/') || path.split('/').any(|p| p == "..") {
+                    self.catalog.status =
+                        "Enter an absolute folder path, e.g. /storage/emulated/0/MyGame.".into();
+                } else {
+                    self.chooser = None;
+                    self.begin_storage_move(path);
                 }
             }
             Some(Action::GameFiles) if self.catalog.config.external_root().is_some() => {
@@ -6284,6 +6385,7 @@ impl Launcher {
                     "theme_grad_end" => &self.catalog.config.theme.gradient_end_hex,
                     "installed_search" => &self.catalog.installed_query,
                     "fm_rename" | "fm_new_folder" => &self.catalog.fm_input_text,
+                    "storage_path" => &self.catalog.storage_input,
                     _ => &self.catalog.query,
                 };
                 crate::platform::show(initial);

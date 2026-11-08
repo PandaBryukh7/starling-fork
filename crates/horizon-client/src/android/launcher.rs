@@ -61,6 +61,7 @@ pub(super) struct Launcher {
     pending_focus: Option<pages::Action>,
     drag: Option<gesture::Drag>,
     chooser: Option<chooser::Chooser>,
+    storage_job: Option<std::sync::Arc<crate::catalog::CopyJob>>,
     exit_confirmation: bool,
     login: login::Login,
     wardrobe: wardrobe::Wardrobe,
@@ -238,6 +239,7 @@ impl Launcher {
             pending_focus: None,
             drag: None,
             chooser: None,
+            storage_job: None,
             exit_confirmation: false,
             login: login::Login::new(),
             session_worker: prewarm_session_worker,
@@ -965,6 +967,7 @@ impl ApplicationHandler for Launcher {
             }
         }
 
+        self.poll_storage_job();
         if self.launch_pending_tick {
             self.launch_pending_tick = false;
             if let Err(error) = self.action(events) {

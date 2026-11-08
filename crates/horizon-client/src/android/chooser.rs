@@ -390,13 +390,27 @@ impl Chooser {
             .collect()
     }
     pub(super) fn viewport(&self, height: f32) -> [f32; 3] {
+        let bottom = if self.custom_folder() {
+            height - 172.0
+        } else {
+            height - 100.0
+        };
         [
             137.0,
-            height - 100.0,
-            (self.choices.len() as f32 * 84.0 - (height - 237.0)).max(0.0),
+            bottom,
+            (self.choices.len() as f32 * 84.0 - (bottom - 137.0)).max(0.0),
         ]
     }
-    pub fn draw(&mut self, ui: &mut Ui, targets: &mut Vec<([f32; 4], Action)>, modal_anim: f32) {
+    fn custom_folder(&self) -> bool {
+        self.title == "Game data folder"
+    }
+    pub fn draw(
+        &mut self,
+        ui: &mut Ui,
+        targets: &mut Vec<([f32; 4], Action)>,
+        modal_anim: f32,
+        input: &str,
+    ) {
         let (w, h) = (ui.w, ui.h);
         let theme = horizon_client::ui_theme::active_theme();
         let slide = (1.0 - modal_anim.clamp(0.0, 1.0)) * 16.0;
@@ -422,7 +436,11 @@ impl Chooser {
             ui.hint_line(32.0, 100.0 + slide, w - 64.0, device, theme.accent);
         }
         let top = 132.0 + slide;
-        let bottom = h - 94.0;
+        let bottom = if self.custom_folder() {
+            h - 166.0
+        } else {
+            h - 94.0
+        };
         self.scroll = self.scroll.clamp(
             0.0,
             (self.choices.len() as f32 * 84.0 - (bottom - top)).max(0.0),
@@ -522,6 +540,50 @@ impl Chooser {
             }
         }
         ui.set_clip(None);
+        if self.custom_folder() {
+            let field = [32.0, h - 148.0, w - 64.0, 56.0];
+            ui.rounded(field[0], field[1], field[2], field[3], 14.0, theme.surface);
+            ui.stroke_rounded(
+                field[0],
+                field[1],
+                field[2],
+                field[3],
+                14.0,
+                1.4,
+                theme.accent,
+            );
+            if input.is_empty() {
+                ui.text(
+                    Face::Regular,
+                    15.0,
+                    48.0,
+                    field[1] + 18.0,
+                    theme.text_muted,
+                    "Custom folder, e.g. /storage/emulated/0/MyGame",
+                );
+            } else {
+                let shown = ui.fit_text(Face::Regular, 15.0, input, w - 96.0);
+                ui.text(
+                    Face::Regular,
+                    15.0,
+                    48.0,
+                    field[1] + 18.0,
+                    theme.text_primary,
+                    &shown,
+                );
+            }
+            if let Some(c) = ui.clip_rect(field) {
+                targets.push((c, Action::Field("storage_path")));
+            }
+            button(
+                ui,
+                targets,
+                [208.0, h - 74.0, 240.0, 44.0],
+                "Use custom folder",
+                Action::ChooseStorageCustom,
+                true,
+            );
+        }
         button(
             ui,
             targets,

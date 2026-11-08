@@ -82,33 +82,81 @@ const GAME_DATA: [&str; 10] = [
     "horizon-keypad.json",
 ];
 
-fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+fn tree_size(path: &Path) -> u64 {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => std::fs::read_dir(path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| tree_size(&e.path()))
+            .sum(),
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    }
+}
+
+fn copy_recursive(
+    from: &Path,
+    to: &Path,
+    done: &std::sync::atomic::AtomicU64,
+) -> std::io::Result<()> {
     if from.is_dir() {
         std::fs::create_dir_all(to)?;
         for entry in std::fs::read_dir(from)? {
             let entry = entry?;
-            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()), done)?;
         }
     } else {
-        std::fs::copy(from, to)?;
+        let bytes = std::fs::copy(from, to)?;
+        done.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
     }
     Ok(())
 }
 
+/// A background copy of game data into a newly chosen folder.
+pub struct CopyJob {
+    /// The folder that becomes the game data root once the copy succeeds.
+    pub target: String,
+    pub done: std::sync::atomic::AtomicU64,
+    pub total: std::sync::atomic::AtomicU64,
+    pub result: std::sync::Mutex<Option<Result<(), String>>>,
+}
+
 /// Copies game data into a new location without overwriting anything already there.
 /// The source is left untouched.
-pub fn copy_game_data(from: &Path, to: &Path) -> std::io::Result<()> {
-    if from == to {
-        return Ok(());
-    }
-    std::fs::create_dir_all(to)?;
-    for name in GAME_DATA {
-        let (src, dst) = (from.join(name), to.join(name));
-        if src.exists() && !dst.exists() {
-            copy_recursive(&src, &dst)?;
+pub fn spawn_copy(from: PathBuf, to: PathBuf, target: String) -> std::sync::Arc<CopyJob> {
+    let job = std::sync::Arc::new(CopyJob {
+        target,
+        done: Default::default(),
+        total: Default::default(),
+        result: Default::default(),
+    });
+    let worker = job.clone();
+    std::thread::spawn(move || {
+        let outcome = (|| -> std::io::Result<()> {
+            if from == to {
+                return Ok(());
+            }
+            std::fs::create_dir_all(&to)?;
+            let wanted: Vec<_> = GAME_DATA
+                .iter()
+                .map(|name| (from.join(name), to.join(name)))
+                .filter(|(src, dst)| src.exists() && !dst.exists())
+                .collect();
+            let total: u64 = wanted.iter().map(|(src, _)| tree_size(src)).sum();
+            worker
+                .total
+                .store(total, std::sync::atomic::Ordering::Relaxed);
+            for (src, dst) in &wanted {
+                copy_recursive(src, dst, &worker.done)?;
+            }
+            Ok(())
+        })();
+        if let Ok(mut slot) = worker.result.lock() {
+            *slot = Some(outcome.map_err(|e| e.to_string()));
         }
-    }
-    Ok(())
+    });
+    job
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -681,6 +729,8 @@ pub struct Catalog {
     pub fm_back_stack: Vec<String>,
     pub fm_forward_stack: Vec<String>,
     pub fm_entries: Vec<crate::document_store::FmEntry>,
+    /// Text typed into the custom game-data folder field.
+    pub storage_input: String,
     pub fm_selected: std::collections::BTreeSet<String>,
     pub fm_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub fm_modal: Option<FmModal>,
@@ -740,6 +790,7 @@ impl Catalog {
             fm_back_stack: Vec::new(),
             fm_forward_stack: Vec::new(),
             fm_entries: Vec::new(),
+            storage_input: String::new(),
             fm_selected: Default::default(),
             fm_clipboard: None,
             fm_modal: None,
@@ -2057,6 +2108,7 @@ impl Catalog {
             Some("theme_grad_end") => &mut self.config.theme.gradient_end_hex,
             Some("installed_search") => &mut self.installed_query,
             Some("fm_rename" | "fm_new_folder") => &mut self.fm_input_text,
+            Some("storage_path") => &mut self.storage_input,
             _ => &mut self.query,
         };
         match out {

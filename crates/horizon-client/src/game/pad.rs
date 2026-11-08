@@ -220,6 +220,26 @@ impl Pads {
 
 impl Game<'_> {
     #[cfg(target_os = "android")]
+    /// What the local player rides, as the name touch layouts use for it: `minecart`, `boat`,
+    /// a mob's id without its namespace (`horse`, `pig`...), `other`, or empty on foot.
+    pub(super) fn touch_vehicle_kind(&self) -> String {
+        let Some(id) = self.riding else {
+            return String::new();
+        };
+        if self.carts.iter().any(|c| c.id == id) {
+            "minecart".into()
+        } else if self.boats.iter().any(|b| b.id == id) {
+            "boat".into()
+        } else if let Some(mob) = self.mobs.iter().find(|m| m.id == id) {
+            mob.kind
+                .id
+                .strip_prefix("minecraft:")
+                .unwrap_or(&mob.kind.id)
+                .to_owned()
+        } else {
+            "other".into()
+        }
+    }
     pub(super) fn touch_shield_available(&self) -> bool {
         self.held()
             .into_iter()
@@ -234,8 +254,10 @@ impl Game<'_> {
     /// Once per loop iteration: read the pads and act on button changes.
     pub(super) fn poll_pads(&mut self, event_loop: &dyn EventLoopCtl) {
         #[cfg(target_os = "android")]
-        if !matches!(self.screen, Screen::Playing | Screen::Options | Screen::Paused)
-            && self.pad.touch.editor.is_some()
+        if !matches!(
+            self.screen,
+            Screen::Playing | Screen::Options | Screen::Paused
+        ) && self.pad.touch.editor.is_some()
         {
             self.pad.touch.cancel_editor();
         }

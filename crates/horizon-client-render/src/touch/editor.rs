@@ -240,7 +240,16 @@ impl TouchControls {
                 self.settings.layouts[self.settings.mode.index()] =
                     def.layouts[self.settings.mode.index()];
                 if self.settings.control_style == ControlStyle::GoyControl {
+                    // Vehicle layouts are not part of the on-foot defaults.
+                    let vehicles: Vec<_> = self
+                        .settings
+                        .custom_buttons
+                        .iter()
+                        .filter(|b| !b.vehicle.is_empty())
+                        .cloned()
+                        .collect();
                     self.settings.custom_buttons = def.custom_buttons;
+                    self.settings.custom_buttons.extend(vehicles);
                 }
                 if e.selected_custom
                     .is_some_and(|idx| idx >= self.settings.custom_buttons.len())

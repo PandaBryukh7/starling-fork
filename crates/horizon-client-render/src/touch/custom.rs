@@ -13,6 +13,10 @@ pub struct CustomButton {
     pub custom_label: String,
     #[serde(default)]
     pub always_visible: bool,
+    /// Shown only while riding this kind of vehicle (`minecart`, `boat`, `horse`...). Empty
+    /// means the button belongs to the on-foot layout.
+    #[serde(default)]
+    pub vehicle: String,
     pub layouts: [Placement; 3],
 }
 impl CustomButton {
@@ -23,6 +27,7 @@ impl CustomButton {
             third_key: String::new(),
             custom_label: String::new(),
             always_visible: false,
+            vehicle: String::new(),
             layouts: [Placement::new(
                 0.68 + (index % 3) as f32 * 0.1,
                 0.35 + (index / 3 % 3) as f32 * 0.12,
@@ -262,8 +267,19 @@ impl TouchControls {
         self.fit_placement(p)
     }
     pub fn custom_visible_for_state(&self, index: usize, in_menu: bool) -> bool {
-        if index >= self.settings.custom_buttons.len() {
+        let Some(button) = self.settings.custom_buttons.get(index) else {
             return false;
+        };
+        if self.editor.is_none() {
+            // A vehicle's buttons show only on that vehicle; the on-foot buttons give way when
+            // the vehicle has a layout of its own.
+            if button.vehicle.is_empty() {
+                if self.hides_standard() {
+                    return false;
+                }
+            } else if button.vehicle != self.vehicle {
+                return false;
+            }
         }
         let p = self.custom_placement(index);
         if p.opacity <= 0.0 {

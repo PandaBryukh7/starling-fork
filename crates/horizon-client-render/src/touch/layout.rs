@@ -452,6 +452,12 @@ pub struct Settings {
     pub circle_size: f32,
     pub button_scale: f32,
     pub custom_buttons: Vec<super::CustomButton>,
+    /// Vehicles whose own buttons replace the standard controls while riding.
+    #[serde(default)]
+    pub vehicle_hide_standard: Vec<String>,
+    /// The built-in vehicle layouts have been added once; deleting them stays deleted.
+    #[serde(default)]
+    pub vehicle_defaults_seeded: bool,
     pub analog_movement: bool,
     pub sprint_button: bool,
     pub sprint_toggle: bool,
@@ -613,6 +619,8 @@ impl Default for Settings {
             circle_size: 32.0,
             button_scale: 1.0,
             custom_buttons: Vec::new(),
+            vehicle_hide_standard: Vec::new(),
+            vehicle_defaults_seeded: false,
             analog_movement: false,
             sprint_button: true,
             sprint_toggle: false,
@@ -671,6 +679,8 @@ impl Settings {
             preset_description: default_goy_preset_desc(),
             joystick_style: JoystickStyle::default(),
             custom_buttons: Self::default_goy_buttons(),
+            vehicle_hide_standard: Vec::new(),
+            vehicle_defaults_seeded: false,
             ..Self::default()
         };
         for c in Control::ALL {
@@ -708,7 +718,23 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        Self::load_from(std::path::Path::new("horizon-touch.json"))
+        let mut s = Self::load_from(std::path::Path::new("horizon-touch.json"));
+        s.seed_vehicle_defaults();
+        s
+    }
+    /// Adds the built-in vehicle layouts once, so existing saves get them too.
+    fn seed_vehicle_defaults(&mut self) {
+        let s = self;
+        if !s.vehicle_defaults_seeded {
+            s.vehicle_defaults_seeded = true;
+            if !s.vehicle_hide_standard.iter().any(|v| v == "minecart")
+                && !s.custom_buttons.iter().any(|b| b.vehicle == "minecart")
+                && s.custom_buttons.len() + 2 <= 32
+            {
+                s.vehicle_hide_standard.push("minecart".into());
+                s.custom_buttons.extend(Self::default_minecart_buttons());
+            }
+        }
     }
     pub fn load_from(path: &std::path::Path) -> Self {
         let mut s: Self = std::fs::read(path)
@@ -1447,6 +1473,23 @@ impl Settings {
     /// Builds the super-optimized default GoyControl button layout (static buttons, no icons,
     /// custom stroke/shadow/roundness, comfortable touch sizes, dedicated Mouse button, and
     /// smart `visible_in_game` / `visible_in_menu` defaults).
+    /// A minecart needs only forward and back; the dismount button stays.
+    pub fn default_minecart_buttons() -> Vec<super::CustomButton> {
+        let make = |label: &str, key: &str, y: f32| {
+            let mut button = super::CustomButton::new(key.into(), 0);
+            button.custom_label = label.into();
+            button.vehicle = "minecart".into();
+            for placement in &mut button.layouts {
+                placement.center = [0.82, y];
+                placement.size = 0.13;
+            }
+            button
+        };
+        vec![
+            make("Forward", "key.keyboard.w", 0.58),
+            make("Back", "key.keyboard.s", 0.80),
+        ]
+    }
     pub fn default_goy_buttons() -> Vec<super::CustomButton> {
         #[allow(clippy::too_many_arguments)]
         let make = |label: &str,
@@ -1483,6 +1526,7 @@ impl Settings {
                 third_key: String::new(),
                 custom_label: label.into(),
                 always_visible: in_menu,
+                vehicle: String::new(),
                 layouts: [p; 3],
             }
         };

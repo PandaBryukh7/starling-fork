@@ -15138,6 +15138,7 @@ impl Game<'_> {
                 self.pad.touch.vertical_movement = self.player.as_ref().is_some_and(|p| p.flying);
                 self.pad.touch.swimming = self.player.as_ref().is_some_and(|p| p.swimming);
                 self.pad.touch.mounted = self.riding.is_some();
+                self.pad.touch.vehicle = self.touch_vehicle_kind();
                 self.pad.touch.shield_available = self.touch_shield_available();
                 self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
                 self.pad.touch.break_progress = self.touch_mining_progress();

@@ -220,6 +220,8 @@ pub struct TouchControls {
     pub vertical_movement: bool,
     pub swimming: bool,
     pub mounted: bool,
+    /// What the player rides: `minecart`, `boat`, a mob such as `horse`, or empty on foot.
+    pub vehicle: String,
     pub sneaking: bool,
     pub toggle_crouch: bool,
     /// Snapshotted by a world gesture; drift cannot turn eating into mining.
@@ -267,6 +269,7 @@ impl Default for TouchControls {
             vertical_movement: false,
             swimming: false,
             mounted: false,
+            vehicle: String::new(),
             sneaking: false,
             toggle_crouch: false,
             hold_uses_item: false,
@@ -468,7 +471,24 @@ impl TouchControls {
             p.visible_in_game
         }
     }
+    /// The vehicle being ridden has a layout of its own that replaces the standard controls.
+    pub fn hides_standard(&self) -> bool {
+        !self.vehicle.is_empty()
+            && self
+                .settings
+                .vehicle_hide_standard
+                .iter()
+                .any(|v| *v == self.vehicle)
+    }
     pub fn visible(&self, c: Control) -> bool {
+        if self.editor.is_none()
+            && self.hides_standard()
+            && !Self::auxiliary_control(c)
+            && c != Control::Sneak
+        {
+            // Dismounting (Sneak) and the menu buttons always remain.
+            return false;
+        }
         if c == Control::Shield && !self.shield_available && self.editor.is_none() {
             return false;
         }

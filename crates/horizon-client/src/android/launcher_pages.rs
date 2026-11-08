@@ -304,6 +304,9 @@ pub(super) enum Action {
     ChooseStorage(u8),
     ChooseStorageCustom,
     DeleteProfile(u32),
+    RenameProfile(u32),
+    ConfirmRenameProfile(u32),
+    CopyProfile(u32),
     ConfirmDeleteProfile(u32),
     Dismiss,
     Immersive,
@@ -1007,7 +1010,47 @@ impl Launcher {
         let mut next = self.catalog.config.clone();
         next.storage_root = Some(path.clone());
         let new = next.game_home(&self.home);
-        self.storage_job = Some(crate::catalog::spawn_copy(old, new, path));
+        self.storage_job = Some(crate::catalog::spawn_copy(old, new, path, None));
+    }
+    /// Copies a profile into a new one named "<name> copy" (numbered when that is taken).
+    fn begin_profile_copy(&mut self, profile: u32) {
+        let config = &self.catalog.config;
+        let base = format!("{} copy", config.profile_name(profile));
+        let name = (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.clone()
+                } else {
+                    format!("{base} {n}")
+                }
+            })
+            .find(|candidate| {
+                candidate.chars().count() <= 24
+                    && config
+                        .check_profile_name(&self.home, None, candidate)
+                        .is_ok()
+            });
+        let Some(name) = name else {
+            self.catalog.status = "Rename the profile to a shorter name before copying it.".into();
+            return;
+        };
+        let id = config.next_profile_id(&self.home);
+        let folder = config
+            .external_root()
+            .map(|_| crate::catalog::sanitize_folder(&name));
+        let mut next = config.clone();
+        next.profile_names.insert(id, name.clone());
+        if let Some(folder) = &folder {
+            next.profile_folders.insert(id, folder.clone());
+        }
+        let from = config.game_home_for(&self.home, profile);
+        let to = next.game_home_for(&self.home, id);
+        self.storage_job = Some(crate::catalog::spawn_copy(
+            from,
+            to,
+            name.clone(),
+            Some((id, name, folder)),
+        ));
     }
     pub(super) fn poll_storage_job(&mut self) {
         let Some(job) = self.storage_job.clone() else {
@@ -1017,6 +1060,25 @@ impl Launcher {
             return;
         };
         self.storage_job = None;
+        if let Some((id, name, folder)) = job.instance.clone() {
+            self.catalog.status = match result {
+                Ok(()) => {
+                    self.catalog.config.profile_names.insert(id, name.clone());
+                    if let Some(folder) = folder {
+                        self.catalog.config.profile_folders.insert(id, folder);
+                    }
+                    match self.catalog.config.save(&self.home) {
+                        Ok(()) => format!("Copied to the new profile \"{name}\"."),
+                        Err(error) => format!("Cannot save the new profile: {error}"),
+                    }
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&job.dest);
+                    format!("Copying failed: {error}")
+                }
+            };
+            return;
+        }
         self.catalog.status = match result {
             Ok(()) => {
                 self.catalog.config.storage_root = Some(job.target.clone());
@@ -1333,9 +1395,9 @@ impl Launcher {
                 format!("Installing {}", self.catalog.downloading_title)
             };
             let sub_left = format!(
-                "Minecraft 26.3 • {} • Profile {}",
+                "Minecraft 26.3 • {} • {}",
                 source_id.label(),
-                self.catalog.config.profile + 1
+                self.catalog.config.current_profile_name()
             );
             let sub_right = format!("{done_mib:.1} / {total_mib:.1} MiB ({:.0}%)", frac * 100.0);
             let stage = self.catalog.progress_stage();
@@ -1401,8 +1463,8 @@ impl Launcher {
                 let paused = self.install_paused.load(Ordering::Relaxed);
                 self.install_transfer.observe(done_mib, paused);
                 let sub_left = format!(
-                    "Minecraft 26.3 • Profile {}",
-                    self.catalog.config.profile + 1
+                    "Minecraft 26.3 • {}",
+                    self.catalog.config.current_profile_name()
                 );
                 let sub_right = format!(
                     "{done_mib:.1} / {total_mib:.1} MiB ({:.0}%)",
@@ -1466,8 +1528,8 @@ impl Launcher {
                     card_y + 52.0,
                     my3_muted(),
                     &format!(
-                        "Minecraft 26.3 • Profile {} • {}",
-                        self.catalog.config.profile + 1,
+                        "Minecraft 26.3 • {} • {}",
+                        self.catalog.config.current_profile_name(),
                         self.catalog.config.renderer.label()
                     ),
                 );
@@ -1532,7 +1594,7 @@ impl Launcher {
                         &mut ui,
                         &mut self.targets,
                         [content_x + play_w + 12.0, btn_y, 134.0, 46.0],
-                        &format!("Profile {} v", self.catalog.config.profile + 1),
+                        &format!("{} v", self.catalog.config.current_profile_name()),
                         Action::Profile,
                         false,
                     );
@@ -2016,7 +2078,10 @@ impl Launcher {
                 &mut ui,
                 &mut self.targets,
                 self.anim.modal_anim,
-                &self.catalog.storage_input,
+                match chooser.form_field() {
+                    Some("instance_name") => &self.catalog.instance_input,
+                    _ => &self.catalog.storage_input,
+                },
             );
             self.list_targets = chooser.navigation(ui.w);
             self.list_view = Some(chooser.viewport(ui.h));
@@ -3661,8 +3726,8 @@ impl Launcher {
             c.device.display_label()
         );
         let prof_txt = format!(
-            "Profile {}  •  UI {}  •  {}",
-            c.profile + 1,
+            "{}  •  UI {}  •  {}",
+            c.current_profile_name(),
             c.ui_scale_label(),
             c.input_host.label()
         );
@@ -4181,7 +4246,7 @@ impl Launcher {
 
                 let theme_str = format!("{} ›", c.theme.preset.label());
                 let ui_scale_str = format!("{} v", c.ui_scale_label());
-                let profile_str = format!("Profile {} v", c.profile + 1);
+                let profile_str = format!("{} v", c.current_profile_name());
                 let input_str = format!("{} v", c.input_host.label());
                 let worker_str = if c.worker_limit == 0 {
                     "Auto (Big.LITTLE Safe) v".to_owned()
@@ -6386,6 +6451,7 @@ impl Launcher {
                     "installed_search" => &self.catalog.installed_query,
                     "fm_rename" | "fm_new_folder" => &self.catalog.fm_input_text,
                     "storage_path" => &self.catalog.storage_input,
+                    "instance_name" => &self.catalog.instance_input,
                     _ => &self.catalog.query,
                 };
                 crate::platform::show(initial);
@@ -6434,10 +6500,43 @@ impl Launcher {
                 self.catalog.refresh(&self.home);
                 self.chooser = None;
             }
+            Some(Action::RenameProfile(profile)) => {
+                let name = self.catalog.config.profile_name(profile);
+                self.catalog.instance_input = name.clone();
+                self.chooser = Some(super::chooser::Chooser::rename_profile(profile, name));
+            }
+            Some(Action::ConfirmRenameProfile(profile)) => {
+                crate::platform::hide();
+                self.catalog.editing = None;
+                let name = self.catalog.instance_input.clone();
+                match self
+                    .catalog
+                    .config
+                    .rename_profile(&self.home, profile, &name)
+                {
+                    Ok(()) => {
+                        self.catalog.config.save(&self.home)?;
+                        self.catalog.refresh(&self.home);
+                        self.open_chooser(chooser::Kind::Profile);
+                    }
+                    Err(error) => {
+                        if let Some(chooser) = &mut self.chooser {
+                            chooser.note(error);
+                        }
+                    }
+                }
+            }
+            Some(Action::CopyProfile(profile)) => {
+                self.chooser = None;
+                self.begin_profile_copy(profile);
+            }
             Some(Action::DeleteProfile(profile)) => {
                 // Profile 0 is the default one and can never be deleted.
                 if profile != 0 {
-                    self.chooser = Some(super::chooser::Chooser::confirm_delete_profile(profile));
+                    self.chooser = Some(super::chooser::Chooser::confirm_delete_profile(
+                        profile,
+                        self.catalog.config.profile_name(profile),
+                    ));
                 }
             }
             Some(Action::ConfirmDeleteProfile(profile)) => {
@@ -6446,6 +6545,8 @@ impl Launcher {
                     if dir.is_dir() {
                         std::fs::remove_dir_all(&dir)?;
                     }
+                    self.catalog.config.forget_profile(profile);
+                    self.catalog.config.save(&self.home)?;
                     if self.catalog.config.profile == profile {
                         self.catalog.config.profile = 0;
                         self.catalog.config.save(&self.home)?;

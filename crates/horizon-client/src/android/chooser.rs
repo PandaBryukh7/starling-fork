@@ -20,7 +20,15 @@ pub(super) enum Kind {
     UiScale,
     ControlProfile,
 }
+/// A text field with a confirm button, drawn under the list.
+pub(super) struct Form {
+    hint: &'static str,
+    pub field: &'static str,
+    button: &'static str,
+    action: Action,
+}
 pub(super) struct Chooser {
+    form: Option<Form>,
     title: &'static str,
     help: &'static str,
     device: Option<String>,
@@ -31,6 +39,7 @@ impl Launcher {
     pub(super) fn open_chooser(&mut self, kind: Kind) {
         crate::platform::hide();
         self.catalog.editing = None;
+        let kind_is_storage = matches!(kind, Kind::Storage);
         let device = if matches!(kind, Kind::Renderer) {
             self.renderer.as_ref().map(|r| {
                 format!(
@@ -209,7 +218,7 @@ impl Launcher {
                     .into_iter()
                     .map(|id| {
                         (
-                            format!("Profile {}", id.saturating_add(1)),
+                            c.profile_name(id),
                             if id == 0 {
                                 "Default profile".into()
                             } else {
@@ -328,7 +337,14 @@ impl Launcher {
                 )
             }
         };
+        let form = kind_is_storage.then_some(Form {
+            hint: "Custom folder, e.g. /storage/emulated/0/MyGame",
+            field: "storage_path",
+            button: "Use custom folder",
+            action: Action::ChooseStorageCustom,
+        });
         self.chooser = Some(Chooser {
+            form,
             title,
             help,
             choices,
@@ -340,6 +356,7 @@ impl Launcher {
 impl Chooser {
     pub(super) fn confirm_delete(name: String) -> Self {
         Self {
+            form: None,
             title: "Remove add-on?",
             help: "Deletes only the selected file from this profile. This cannot be undone.",
             device: Some(name),
@@ -355,11 +372,34 @@ impl Chooser {
             scroll: 0.0,
         }
     }
-    pub(super) fn confirm_delete_profile(id: u32) -> Self {
+    pub(super) fn rename_profile(id: u32, current: String) -> Self {
         Self {
+            form: Some(Form {
+                hint: "New name (up to 24 characters)",
+                field: "instance_name",
+                button: "Save",
+                action: Action::ConfirmRenameProfile(id),
+            }),
+            title: "Rename profile",
+            help: "Choose a new name. In a shared game data folder its folder is renamed too.",
+            device: Some(current),
+            choices: Vec::new(),
+            scroll: 0.0,
+        }
+    }
+    /// Shows a message under the title, for example why a rename was refused.
+    pub(super) fn note(&mut self, text: String) {
+        self.device = Some(text);
+    }
+    pub(super) fn form_field(&self) -> Option<&'static str> {
+        self.form.as_ref().map(|f| f.field)
+    }
+    pub(super) fn confirm_delete_profile(id: u32, name: String) -> Self {
+        Self {
+            form: None,
             title: "Delete profile?",
             help: "Deletes all saves, mods, packs and settings of this profile. This cannot be undone.",
-            device: Some(format!("Profile {}", id.saturating_add(1))),
+            device: Some(name),
             choices: vec![
                 (
                     "Delete".into(),
@@ -402,7 +442,7 @@ impl Chooser {
         ]
     }
     fn custom_folder(&self) -> bool {
-        self.title == "Game data folder"
+        self.form.is_some()
     }
     pub fn draw(
         &mut self,
@@ -511,36 +551,65 @@ impl Chooser {
             if let Some(c) = ui.clip_rect([32.0, y, w - 64.0, 74.0]) {
                 targets.push((c, *action));
             }
-            // Non-default profiles get a trash button in the row's right corner. It is pushed
-            // after the row, and the hit test takes the last match, so it wins over the row.
+            // Existing profiles get copy / rename (and, except the default, delete) buttons in the
+            // row's right corner. They are pushed after the row, and the hit test takes the last
+            // match, so they win over the row.
             if let Action::ChooseProfile(id) = action
-                && *id != 0
                 && self.title == "Choose profile"
-                && label.starts_with("Profile ")
+                && label.as_str() != "Create profile"
             {
-                let trash = [w - 32.0 - 14.0 - 48.0, y + 13.0, 48.0, 48.0];
-                ui.rounded(
-                    trash[0],
-                    trash[1],
-                    trash[2],
-                    trash[3],
-                    14.0,
-                    theme.surface_bright,
-                );
-                ui.icon(
-                    Icon::Trash,
-                    trash[0] + 13.0,
-                    trash[1] + 13.0,
-                    22.0,
-                    theme.danger,
-                );
-                if let Some(c) = ui.clip_rect(trash) {
-                    targets.push((c, Action::DeleteProfile(*id)));
+                let mut bx = w - 32.0 - 14.0 - 48.0;
+                if *id != 0 {
+                    let trash = [bx, y + 13.0, 48.0, 48.0];
+                    ui.rounded(
+                        trash[0],
+                        trash[1],
+                        trash[2],
+                        trash[3],
+                        14.0,
+                        theme.surface_bright,
+                    );
+                    ui.icon(
+                        Icon::Trash,
+                        trash[0] + 13.0,
+                        trash[1] + 13.0,
+                        22.0,
+                        theme.danger,
+                    );
+                    if let Some(c) = ui.clip_rect(trash) {
+                        targets.push((c, Action::DeleteProfile(*id)));
+                    }
+                    bx -= 56.0;
+                }
+                for (icon, act) in [
+                    (Icon::Pencil, Action::RenameProfile(*id)),
+                    (Icon::Copy, Action::CopyProfile(*id)),
+                ] {
+                    let rect = [bx, y + 13.0, 48.0, 48.0];
+                    ui.rounded(
+                        rect[0],
+                        rect[1],
+                        rect[2],
+                        rect[3],
+                        14.0,
+                        theme.surface_bright,
+                    );
+                    ui.icon(
+                        icon,
+                        rect[0] + 13.0,
+                        rect[1] + 13.0,
+                        22.0,
+                        theme.text_primary,
+                    );
+                    if let Some(c) = ui.clip_rect(rect) {
+                        targets.push((c, act));
+                    }
+                    bx -= 56.0;
                 }
             }
         }
         ui.set_clip(None);
-        if self.custom_folder() {
+        if let Some(form) = &self.form {
             let field = [32.0, h - 148.0, w - 64.0, 56.0];
             ui.rounded(field[0], field[1], field[2], field[3], 14.0, theme.surface);
             ui.stroke_rounded(
@@ -559,7 +628,7 @@ impl Chooser {
                     48.0,
                     field[1] + 18.0,
                     theme.text_muted,
-                    "Custom folder, e.g. /storage/emulated/0/MyGame",
+                    form.hint,
                 );
             } else {
                 let shown = ui.fit_text(Face::Regular, 15.0, input, w - 96.0);
@@ -573,14 +642,14 @@ impl Chooser {
                 );
             }
             if let Some(c) = ui.clip_rect(field) {
-                targets.push((c, Action::Field("storage_path")));
+                targets.push((c, Action::Field(form.field)));
             }
             button(
                 ui,
                 targets,
                 [208.0, h - 74.0, 240.0, 44.0],
-                "Use custom folder",
-                Action::ChooseStorageCustom,
+                form.button,
+                form.action,
                 true,
             );
         }

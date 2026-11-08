@@ -82,6 +82,22 @@ const GAME_DATA: [&str; 10] = [
     "horizon-keypad.json",
 ];
 
+/// A name made safe for use as a folder name.
+pub fn sanitize_folder(name: &str) -> String {
+    let cleaned: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    cleaned.trim_matches(|c| c == '.' || c == ' ').to_owned()
+}
+
 fn tree_size(path: &Path) -> u64 {
     match std::fs::metadata(path) {
         Ok(m) if m.is_dir() => std::fs::read_dir(path)
@@ -117,6 +133,10 @@ fn copy_recursive(
 pub struct CopyJob {
     /// The folder that becomes the game data root once the copy succeeds.
     pub target: String,
+    /// Where the data is copied to.
+    pub dest: PathBuf,
+    /// Set when the copy creates a new profile: its number, name and shared-folder name.
+    pub instance: Option<(u32, String, Option<String>)>,
     pub done: std::sync::atomic::AtomicU64,
     pub total: std::sync::atomic::AtomicU64,
     pub result: std::sync::Mutex<Option<Result<(), String>>>,
@@ -124,9 +144,16 @@ pub struct CopyJob {
 
 /// Copies game data into a new location without overwriting anything already there.
 /// The source is left untouched.
-pub fn spawn_copy(from: PathBuf, to: PathBuf, target: String) -> std::sync::Arc<CopyJob> {
+pub fn spawn_copy(
+    from: PathBuf,
+    to: PathBuf,
+    target: String,
+    instance: Option<(u32, String, Option<String>)>,
+) -> std::sync::Arc<CopyJob> {
     let job = std::sync::Arc::new(CopyJob {
         target,
+        dest: to.clone(),
+        instance,
         done: Default::default(),
         total: Default::default(),
         result: Default::default(),
@@ -168,6 +195,11 @@ pub struct Config {
     pub storage_root: Option<String>,
     /// The first-run storage question has been shown.
     pub storage_prompted: bool,
+    /// Display names of profiles (instances), by profile number.
+    pub profile_names: std::collections::BTreeMap<u32, String>,
+    /// Folder names of profiles inside the shared game data folder, when they differ from
+    /// the default `profile-N`.
+    pub profile_folders: std::collections::BTreeMap<u32, String>,
     pub proxy: Option<String>,
     pub name: String,
     pub server: String,
@@ -322,7 +354,7 @@ impl Config {
     }
     pub fn game_home_for(&self, home: &Path, profile: u32) -> PathBuf {
         match self.external_root() {
-            Some(root) => root.join(format!("profile-{}", profile.saturating_add(1))),
+            Some(root) => root.join(self.folder_of(profile)),
             None => {
                 // Legacy modpack selections are ignored; their files remain untouched.
                 if profile == 0 {
@@ -333,28 +365,136 @@ impl Config {
             }
         }
     }
+    /// Folder name of a profile inside the shared game data folder.
+    fn folder_of(&self, profile: u32) -> String {
+        self.profile_folders
+            .get(&profile)
+            .cloned()
+            .unwrap_or_else(|| format!("profile-{}", profile.saturating_add(1)))
+    }
+    pub fn profile_name(&self, profile: u32) -> String {
+        match self.profile_names.get(&profile) {
+            Some(name) if !name.trim().is_empty() => name.clone(),
+            _ => format!("Profile {}", profile.saturating_add(1)),
+        }
+    }
+    pub fn current_profile_name(&self) -> String {
+        self.profile_name(self.profile)
+    }
     /// Every profile that exists in the current storage location, plus the default and the
     /// selected one.
     pub fn profile_ids(&self, home: &Path) -> Vec<u32> {
         let mut ids = vec![0, self.profile];
-        let (dir, prefix, offset) = match self.external_root() {
-            Some(root) => (root, "profile-", 1),
-            None => (home.join("profiles"), "profile-", 0),
-        };
-        ids.extend(
-            std::fs::read_dir(dir)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .filter_map(|e| {
-                    let number: u32 = e.file_name().to_str()?.strip_prefix(prefix)?.parse().ok()?;
-                    number.checked_sub(offset)
-                }),
-        );
+        match self.external_root() {
+            Some(root) => {
+                let known: std::collections::BTreeMap<&str, u32> = self
+                    .profile_folders
+                    .iter()
+                    .map(|(id, folder)| (folder.as_str(), *id))
+                    .collect();
+                for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+                    if !entry.path().is_dir() {
+                        continue;
+                    }
+                    let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                        continue;
+                    };
+                    if let Some(id) = known.get(name.as_str()) {
+                        ids.push(*id);
+                    } else if let Some(number) = name
+                        .strip_prefix("profile-")
+                        .and_then(|n| n.parse::<u32>().ok())
+                        && number >= 1
+                        && !self.profile_folders.contains_key(&(number - 1))
+                    {
+                        ids.push(number - 1);
+                    }
+                }
+            }
+            None => {
+                for entry in std::fs::read_dir(home.join("profiles"))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                {
+                    if !entry.path().is_dir() {
+                        continue;
+                    }
+                    if let Some(id) = entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|n| n.strip_prefix("profile-"))
+                        .and_then(|n| n.parse::<u32>().ok())
+                    {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+    pub fn next_profile_id(&self, home: &Path) -> u32 {
+        self.profile_ids(home)
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1)
+    }
+    /// Checks a new instance name and returns the folder name it would use.
+    pub fn check_profile_name(
+        &self,
+        home: &Path,
+        id: Option<u32>,
+        name: &str,
+    ) -> Result<String, String> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 24 {
+            return Err("The name must be 1-24 characters.".into());
+        }
+        let folder = sanitize_folder(name);
+        if folder.is_empty() {
+            return Err("Use letters or digits in the name.".into());
+        }
+        for other in self.profile_ids(home) {
+            if Some(other) == id {
+                continue;
+            }
+            let taken = self.profile_name(other).eq_ignore_ascii_case(name)
+                || (self.external_root().is_some()
+                    && self.folder_of(other).eq_ignore_ascii_case(&folder));
+            if taken {
+                return Err("Another profile already uses that name.".into());
+            }
+        }
+        Ok(folder)
+    }
+    pub fn rename_profile(&mut self, home: &Path, id: u32, name: &str) -> Result<(), String> {
+        let folder = self.check_profile_name(home, Some(id), name)?;
+        if let Some(root) = self.external_root() {
+            let old = root.join(self.folder_of(id));
+            let new = root.join(&folder);
+            if old != new {
+                if new.exists()
+                    && !old
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&new.to_string_lossy())
+                {
+                    return Err("A folder with that name already exists.".into());
+                }
+                if old.exists() {
+                    std::fs::rename(&old, &new).map_err(|e| e.to_string())?;
+                }
+            }
+            self.profile_folders.insert(id, folder);
+        }
+        self.profile_names.insert(id, name.trim().to_owned());
+        Ok(())
+    }
+    pub fn forget_profile(&mut self, id: u32) {
+        self.profile_names.remove(&id);
+        self.profile_folders.remove(&id);
     }
     pub fn touch_name_changed(&mut self) {
         let secs = std::time::SystemTime::now()
@@ -731,6 +871,8 @@ pub struct Catalog {
     pub fm_entries: Vec<crate::document_store::FmEntry>,
     /// Text typed into the custom game-data folder field.
     pub storage_input: String,
+    /// Text typed into the profile rename field.
+    pub instance_input: String,
     pub fm_selected: std::collections::BTreeSet<String>,
     pub fm_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub fm_modal: Option<FmModal>,
@@ -791,6 +933,7 @@ impl Catalog {
             fm_forward_stack: Vec::new(),
             fm_entries: Vec::new(),
             storage_input: String::new(),
+            instance_input: String::new(),
             fm_selected: Default::default(),
             fm_clipboard: None,
             fm_modal: None,
@@ -2109,6 +2252,7 @@ impl Catalog {
             Some("installed_search") => &mut self.installed_query,
             Some("fm_rename" | "fm_new_folder") => &mut self.fm_input_text,
             Some("storage_path") => &mut self.storage_input,
+            Some("instance_name") => &mut self.instance_input,
             _ => &mut self.query,
         };
         match out {

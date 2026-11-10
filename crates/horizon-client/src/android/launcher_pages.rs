@@ -5863,6 +5863,7 @@ impl Launcher {
                 tc.settings = horizon_client::touch::Settings::load_from(
                     &game_home.join("horizon-touch.json"),
                 );
+                tc.settings.seed_vehicle_defaults();
                 tc.open_editor();
                 self.control_editor = Some(tc);
             }

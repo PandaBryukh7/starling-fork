@@ -722,8 +722,17 @@ impl Settings {
         s.seed_vehicle_defaults();
         s
     }
+    /// Replaces every vehicle layout with the built-in ones.
+    pub fn reset_vehicle_defaults(&mut self) {
+        self.custom_buttons.retain(|b| b.vehicle.is_empty());
+        self.vehicle_hide_standard = vec!["minecart".into()];
+        self.vehicle_defaults_seeded = true;
+        let room = 32usize.saturating_sub(self.custom_buttons.len());
+        self.custom_buttons
+            .extend(Self::default_minecart_buttons().into_iter().take(room));
+    }
     /// Adds the built-in vehicle layouts once, so existing saves get them too.
-    fn seed_vehicle_defaults(&mut self) {
+    pub fn seed_vehicle_defaults(&mut self) {
         let s = self;
         if !s.vehicle_defaults_seeded {
             s.vehicle_defaults_seeded = true;

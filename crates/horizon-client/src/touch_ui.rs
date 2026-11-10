@@ -7619,6 +7619,7 @@ pub fn touch_hud_editor(
                 let fresh = crate::touch::Settings::default_for_style(cur_style);
                 tc.settings.layouts = fresh.layouts;
                 tc.settings.custom_buttons = fresh.custom_buttons;
+                tc.settings.reset_vehicle_defaults();
                 tc.settings.button_visibility = fresh.button_visibility;
                 tc.settings.joystick_style = fresh.joystick_style;
                 tc.settings.preset_id = cur_id;

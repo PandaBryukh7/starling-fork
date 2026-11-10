@@ -350,7 +350,9 @@ impl Settings {
             .map(crate::mod_list::ModList::load)
             .unwrap_or_default();
         let keypad = crate::keypad::Settings::load(&path.with_file_name("horizon-keypad.json"));
-        let touch = crate::touch::Settings::load_from(&path.with_file_name("horizon-touch.json"));
+        let mut touch =
+            crate::touch::Settings::load_from(&path.with_file_name("horizon-touch.json"));
+        touch.seed_vehicle_defaults();
         let settings = match fs::read(path) {
             Ok(bytes) => Self {
                 horizon,

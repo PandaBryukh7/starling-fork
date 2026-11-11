@@ -17,6 +17,9 @@ pub struct CustomButton {
     /// means the button belongs to the on-foot layout.
     #[serde(default)]
     pub vehicle: String,
+    /// Draw a D-pad arrow (`up`, `down`, `left`, `right`) instead of the label.
+    #[serde(default)]
+    pub icon: String,
     pub layouts: [Placement; 3],
 }
 impl CustomButton {
@@ -28,6 +31,7 @@ impl CustomButton {
             custom_label: String::new(),
             always_visible: false,
             vehicle: String::new(),
+            icon: String::new(),
             layouts: [Placement::new(
                 0.68 + (index % 3) as f32 * 0.1,
                 0.35 + (index / 3 % 3) as f32 * 0.12,
@@ -528,6 +532,22 @@ impl TouchControls {
             }
             if is_goy {
                 draw_goy_static_button(b, a, rect, &p, &button.label(), held, toggled, opacity);
+            } else if !button.icon.is_empty()
+                && a.sprites
+                    .contains_key(&format!("gui/bedrock/controls/{}", button.icon))
+            {
+                let name = format!(
+                    "controls/{}{}",
+                    button.icon,
+                    if pressed { "_pressed" } else { "" }
+                );
+                fitted_sprite(
+                    b,
+                    a,
+                    &name,
+                    rect,
+                    rgba(255, 255, 255, (opacity * 255.0).round() as u8),
+                );
             } else {
                 text_button(
                     b,

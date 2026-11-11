@@ -734,6 +734,16 @@ impl Settings {
     /// Adds the built-in vehicle layouts once, so existing saves get them too.
     pub fn seed_vehicle_defaults(&mut self) {
         let s = self;
+        // Saves made before the arrow icons existed.
+        for button in &mut s.custom_buttons {
+            if button.vehicle == "minecart" && button.icon.is_empty() {
+                match (button.key.as_str(), button.custom_label.as_str()) {
+                    ("key.keyboard.w", "Forward") => button.icon = "up".into(),
+                    ("key.keyboard.s", "Back") => button.icon = "down".into(),
+                    _ => {}
+                }
+            }
+        }
         if !s.vehicle_defaults_seeded {
             s.vehicle_defaults_seeded = true;
             if !s.vehicle_hide_standard.iter().any(|v| v == "minecart")
@@ -1484,9 +1494,10 @@ impl Settings {
     /// smart `visible_in_game` / `visible_in_menu` defaults).
     /// A minecart needs only forward and back; the dismount button stays.
     pub fn default_minecart_buttons() -> Vec<super::CustomButton> {
-        let make = |label: &str, key: &str, y: f32| {
+        let make = |label: &str, key: &str, icon: &str, y: f32| {
             let mut button = super::CustomButton::new(key.into(), 0);
             button.custom_label = label.into();
+            button.icon = icon.into();
             button.vehicle = "minecart".into();
             for placement in &mut button.layouts {
                 placement.center = [0.82, y];
@@ -1495,8 +1506,8 @@ impl Settings {
             button
         };
         vec![
-            make("Forward", "key.keyboard.w", 0.58),
-            make("Back", "key.keyboard.s", 0.80),
+            make("Forward", "key.keyboard.w", "up", 0.58),
+            make("Back", "key.keyboard.s", "down", 0.80),
         ]
     }
     pub fn default_goy_buttons() -> Vec<super::CustomButton> {
@@ -1536,6 +1547,7 @@ impl Settings {
                 custom_label: label.into(),
                 always_visible: in_menu,
                 vehicle: String::new(),
+                icon: String::new(),
                 layouts: [p; 3],
             }
         };

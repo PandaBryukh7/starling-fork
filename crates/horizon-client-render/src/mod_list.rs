@@ -49,6 +49,9 @@ pub struct ModList {
     /// Ids of the native mods the player turned off: they rest
     /// (`native_on`) until the launcher's next build leaves them out.
     pub disabled: BTreeSet<String>,
+    /// Android's built-in mods the player has not installed (or uninstalled):
+    /// they are off and absent from Options > Mods (`mod.<id>:removed`).
+    pub removed: BTreeSet<String>,
     /// The keys the player chose for mods' keys, mod id → key name → key
     /// (`key.<id>.<name>:key.keyboard.x` lines).
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
@@ -98,11 +101,16 @@ impl ModList {
                 .collect()
         };
         let (enabled, disabled) = (ids("true"), ids("false"));
+        let mut removed = ids("removed");
         #[cfg(target_os = "android")]
         let disabled = {
             let mut disabled = disabled;
             for (id, _, _) in ANDROID_BUNDLED {
                 if !enabled.contains(id) {
+                    // Never installed: neither a `true` nor a `false` line.
+                    if !disabled.contains(id) {
+                        removed.insert(id.to_owned());
+                    }
                     disabled.insert(id.to_owned());
                 }
             }
@@ -123,6 +131,7 @@ impl ModList {
         Self {
             enabled,
             disabled,
+            removed,
             keys,
             installed: Vec::new(),
         }
@@ -130,11 +139,12 @@ impl ModList {
     pub fn serialize(&self) -> String {
         let on = self.enabled.iter().map(|id| format!("mod.{id}:true\n"));
         let off = self.disabled.iter().map(|id| format!("mod.{id}:false\n"));
+        let gone = self.removed.iter().map(|id| format!("mod.{id}:removed\n"));
         let keys = self.keys.iter().flat_map(|(id, keys)| {
             keys.iter()
                 .map(move |(name, key)| format!("key.{id}.{name}:{key}\n"))
         });
-        on.chain(off).chain(keys).collect()
+        on.chain(off).chain(gone).chain(keys).collect()
     }
     /// Mod `id`'s chosen keys, for `Mods::set_bindings`.
     pub fn keys_of(&self, id: &str) -> Vec<(&str, &str)> {
@@ -146,6 +156,7 @@ impl ModList {
         let path = dir.join(FILE);
         if self.enabled.is_empty()
             && self.disabled.is_empty()
+            && self.removed.is_empty()
             && self.keys.is_empty()
             && !path.exists()
         {

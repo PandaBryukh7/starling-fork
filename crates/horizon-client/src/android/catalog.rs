@@ -859,6 +859,8 @@ pub fn format_file_size(bytes: u64) -> String {
 pub struct Catalog {
     pub local: Vec<LocalItem>,
     pub bundled_enabled: std::collections::BTreeSet<String>,
+    /// Built-in mods the player installed (enabled or not).
+    pub bundled_installed: std::collections::BTreeSet<String>,
     pub sections: [bool; 3],
     pub pending_delete: Option<LocalItem>,
     pub installed_sub_tab: InstalledSubTab,
@@ -922,6 +924,7 @@ impl Catalog {
         let mut result = Self {
             local: vec![],
             bundled_enabled: Default::default(),
+            bundled_installed: Default::default(),
             sections: [true, true, true],
             pending_delete: None,
             installed_sub_tab: InstalledSubTab::Library,
@@ -1002,6 +1005,11 @@ impl Catalog {
             .collect();
         let on = horizon_client::mod_list::ModList::load(&game);
         self.bundled_enabled = on.enabled.difference(&on.disabled).cloned().collect();
+        self.bundled_installed = horizon_client::mod_list::ANDROID_BUNDLED
+            .iter()
+            .filter(|(id, _, _)| !on.removed.contains(*id))
+            .map(|(id, _, _)| (*id).to_owned())
+            .collect();
         let settings = horizon_client::settings::Settings::load(&game.join("options.txt"));
         self.local.clear();
         for kind in horizon_client::content_files::Kind::ALL {
@@ -2074,6 +2082,7 @@ impl Catalog {
                         on.disabled.insert(bid.to_owned());
                     } else {
                         on.disabled.remove(bid);
+                        on.removed.remove(bid);
                         on.enabled.insert(bid.to_owned());
                     }
                     on.save(&game);
@@ -2129,6 +2138,7 @@ impl Catalog {
                 let mut on = horizon_client::mod_list::ModList::load(&game);
                 on.enabled.remove(bid);
                 on.disabled.insert(bid.to_owned());
+                on.removed.insert(bid.to_owned());
                 on.save(&game);
                 return Ok(());
             }

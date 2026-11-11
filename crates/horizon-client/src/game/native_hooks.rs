@@ -4267,6 +4267,8 @@ impl Game<'_> {
     pub(super) fn list_native_mods(&mut self) {
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
+        // Built-in mods the player has not installed stay out of the list.
+        mods.retain(|m| !self.settings.mods.removed.contains(&m.id));
         // A WebAssembly mod of the same id doesn't run (`start_mods`): the
         // native row stands for it, and alone toggles its `mod.<id>` line.
         self.settings

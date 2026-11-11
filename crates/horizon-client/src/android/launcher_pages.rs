@@ -320,6 +320,7 @@ pub(super) enum Action {
     CacheBudget,
     ChooseCacheBudget(u32),
     ToggleBundled(&'static str),
+    UninstallBundled(&'static str),
     WorldFiles,
     GameFiles,
     StarlingDownload,
@@ -1808,10 +1809,22 @@ impl Launcher {
                 let enabled = self.catalog.bundled_enabled.contains(*id);
                 let card_rect = [content_x, y, content_w - 118.0, 64.0];
                 let btn_rect = [content_x + content_w - 112.0, y + 13.0, 100.0, 38.0];
+                let is_installed = self.catalog.bundled_installed.contains(*id);
+                let card_rect = if is_installed {
+                    [content_x, y, content_w - 52.0 - 108.0 - 6.0, 64.0]
+                } else {
+                    card_rect
+                };
                 self.list_targets
                     .push((card_rect, Action::OpenBundledProject(id)));
-                self.list_targets
-                    .push((btn_rect, Action::ToggleBundled(id)));
+                self.list_targets.push((
+                    if is_installed {
+                        [content_x + content_w - 160.0, y, 160.0, 64.0]
+                    } else {
+                        btn_rect
+                    },
+                    Action::ToggleBundled(id),
+                ));
                 if y + 64.0 < top || y > bottom {
                     continue;
                 }
@@ -1878,14 +1891,52 @@ impl Launcher {
                 if let Some(c) = ui.clip_rect(card_rect) {
                     self.targets.push((c, Action::OpenBundledProject(id)));
                 }
-                button(
-                    &mut ui,
-                    &mut self.targets,
-                    btn_rect,
-                    if enabled { "Installed" } else { "Install" },
-                    Action::ToggleBundled(id),
-                    !enabled,
-                );
+                let installed = self.catalog.bundled_installed.contains(*id);
+                if installed {
+                    // Disable/Enable beside a trash button that uninstalls.
+                    let trash = [content_x + content_w - 52.0, y + 8.0, 48.0, 48.0];
+                    let toggle = [
+                        content_x + content_w - 52.0 - 100.0 - 8.0,
+                        y + 13.0,
+                        100.0,
+                        38.0,
+                    ];
+                    ui.rounded(
+                        trash[0],
+                        trash[1],
+                        trash[2],
+                        trash[3],
+                        14.0,
+                        my3_surface_high(),
+                    );
+                    ui.icon(
+                        Icon::Trash,
+                        trash[0] + 13.0,
+                        trash[1] + 13.0,
+                        22.0,
+                        my3_accent(),
+                    );
+                    if let Some(c) = ui.clip_rect(trash) {
+                        self.targets.push((c, Action::UninstallBundled(id)));
+                    }
+                    button(
+                        &mut ui,
+                        &mut self.targets,
+                        toggle,
+                        if enabled { "Disable" } else { "Enable" },
+                        Action::ToggleBundled(id),
+                        !enabled,
+                    );
+                } else {
+                    button(
+                        &mut ui,
+                        &mut self.targets,
+                        btn_rect,
+                        "Install",
+                        Action::ToggleBundled(id),
+                        true,
+                    );
+                }
             }
 
             for (row, (i, p)) in catalog_rows.into_iter().enumerate() {
@@ -3391,8 +3442,10 @@ impl Launcher {
             if let Some(bundled) = modal.bundled_id {
                 if self.catalog.bundled_enabled.contains(bundled) {
                     "Installed (Tap to Disable)".to_owned()
+                } else if self.catalog.bundled_installed.contains(bundled) {
+                    "Enable".to_owned()
                 } else {
-                    format!("Enable Built-in ({version})")
+                    format!("Install Built-in ({version})")
                 }
             } else if crate::catalog::source_only_mod(&modal.project) {
                 "Native .hnmod temporarily unsupported on Android".to_owned()
@@ -6108,6 +6161,9 @@ impl Launcher {
             Some(Action::ToggleBundled(id)) => {
                 self.toggle_bundled_mod(id)?;
             }
+            Some(Action::UninstallBundled(id)) => {
+                self.uninstall_bundled_mod(id)?;
+            }
             Some(Action::StarlingDownload) => {
                 if !crate::platform::open_url(
                     "https://github.com/JuanLuci/starling/releases/latest",
@@ -7102,6 +7158,19 @@ impl Launcher {
         Ok(())
     }
 
+    fn uninstall_bundled_mod(&mut self, id: &'static str) -> Result<()> {
+        let game = self.catalog.config.game_home(&self.home);
+        let mut list = horizon_client::mod_list::ModList::load(&game);
+        list.enabled.remove(id);
+        list.disabled.insert(id.into());
+        list.removed.insert(id.into());
+        std::fs::create_dir_all(&game)?;
+        std::fs::write(game.join(horizon_client::mod_list::FILE), list.serialize())?;
+        self.catalog.refresh(&self.home);
+        self.catalog.status = format!("Bundled {id} uninstalled.");
+        Ok(())
+    }
+
     fn toggle_bundled_mod(&mut self, id: &'static str) -> Result<()> {
         let game = self.catalog.config.game_home(&self.home);
         let mut list = horizon_client::mod_list::ModList::load(&game);
@@ -7111,6 +7180,7 @@ impl Launcher {
             list.disabled.insert(id.into());
         } else {
             list.disabled.remove(id);
+            list.removed.remove(id);
             list.enabled.insert(id.into());
         }
         std::fs::create_dir_all(&game)?;

@@ -15136,9 +15136,19 @@ impl Game<'_> {
                 self.pad.touch.context_use =
                     self.pad.touch.settings.contextual_interact && self.touch_context_use();
                 self.pad.touch.vertical_movement = self.player.as_ref().is_some_and(|p| p.flying);
-                self.pad.touch.swimming = self.player.as_ref().is_some_and(|p| p.swimming);
+                self.pad.touch.swimming = self
+                    .player
+                    .as_ref()
+                    .is_some_and(|p| p.swimming || p.fluids.was_touching_water);
                 self.pad.touch.mounted = self.riding.is_some();
                 self.pad.touch.vehicle = self.touch_vehicle_kind();
+                if self.pad.touch.vehicle.is_empty() {
+                    if self.pad.touch.vertical_movement {
+                        self.pad.touch.vehicle = "fly".into();
+                    } else if self.pad.touch.swimming {
+                        self.pad.touch.vehicle = "swim".into();
+                    }
+                }
                 self.pad.touch.shield_available = self.touch_shield_available();
                 self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
                 self.pad.touch.break_progress = self.touch_mining_progress();

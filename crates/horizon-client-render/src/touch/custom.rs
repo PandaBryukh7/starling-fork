@@ -536,11 +536,15 @@ impl TouchControls {
                 && a.sprites
                     .contains_key(&format!("gui/bedrock/controls/{}", button.icon))
             {
-                let name = format!(
-                    "controls/{}{}",
-                    button.icon,
-                    if pressed { "_pressed" } else { "" }
-                );
+                let pressed_name = format!("controls/{}_pressed", button.icon);
+                let name = if pressed
+                    && a.sprites
+                        .contains_key(&format!("gui/bedrock/{pressed_name}"))
+                {
+                    pressed_name
+                } else {
+                    format!("controls/{}", button.icon)
+                };
                 fitted_sprite(
                     b,
                     a,

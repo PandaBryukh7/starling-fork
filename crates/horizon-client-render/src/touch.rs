@@ -489,6 +489,19 @@ impl TouchControls {
             // Dismounting (Sneak) and the menu buttons always remain.
             return false;
         }
+        if self.editor.is_none()
+            && matches!(c, Control::Jump | Control::Sneak)
+            && !self.mounted
+            && (self.vehicle == "fly" || self.vehicle == "swim")
+            && self
+                .settings
+                .custom_buttons
+                .iter()
+                .any(|b| b.vehicle == self.vehicle)
+        {
+            // Flying and swimming have Ascend and Descend buttons of their own.
+            return false;
+        }
         if c == Control::Shield && !self.shield_available && self.editor.is_none() {
             return false;
         }
@@ -529,33 +542,8 @@ impl TouchControls {
             (p.opacity * self.hud_opacity_scale.clamp(0.0, 1.0)).clamp(0.0, 1.0)
         }
     }
-    /// Ascend/Descend replace the ground's Sneak spot (the D-pad's centre) while flying or swimming.
-    fn flight_split(&self) -> bool {
-        self.editor.is_none() && !self.mounted && (self.vertical_movement || self.swimming)
-    }
     pub fn placement(&self, c: Control) -> layout::Placement {
         let mut p = self.settings.placement(c);
-        if c == Control::Sneak && self.flight_split() {
-            // Flying or swimming: Jump and Sneak become Ascend and Descend, one above the other
-            // on the Jump button's spot, wherever the player put Sneak on the ground.
-            let mut q = self.settings.placement(Control::Jump);
-            let step = q.size
-                * if q.height_ratio.is_finite() {
-                    q.height_ratio.max(0.05)
-                } else {
-                    1.0
-                }
-                * 1.08;
-            q.center[1] += if q.center[1] + step + q.size * 0.5 <= 1.0 {
-                step
-            } else {
-                -step
-            };
-            q.toggleable = false;
-            q.passthrough = false;
-            q.swipeable = false;
-            return q;
-        }
         let factory_swap = c == Control::Offhand
             && self.settings.layouts[self.settings.mode.index()][c as usize].center == [0.80, 0.96]
             && p.size == 0.075;
@@ -1044,6 +1032,11 @@ impl TouchControls {
                         self.last_sneak_tap = Some(now);
                         Role::Ignore
                     }
+                }
+                Some(Control::Sneak) if self.mounted => {
+                    // Dismounting is a plain press, never a latched crouch.
+                    self.latched_controls &= !(1 << (Control::Sneak as u16));
+                    Self::button(Control::Sneak).map_or(Role::Ignore, Role::Button)
                 }
                 Some(Control::Sneak)
                     if self.placement(Control::Sneak).toggleable && !self.mounted =>

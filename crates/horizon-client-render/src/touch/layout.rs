@@ -458,6 +458,9 @@ pub struct Settings {
     /// The built-in vehicle layouts have been added once; deleting them stays deleted.
     #[serde(default)]
     pub vehicle_defaults_seeded: bool,
+    /// The built-in flying and swimming ascend/descend buttons have been added once.
+    #[serde(default)]
+    pub flight_defaults_seeded: bool,
     pub analog_movement: bool,
     pub sprint_button: bool,
     pub sprint_toggle: bool,
@@ -621,6 +624,7 @@ impl Default for Settings {
             custom_buttons: Vec::new(),
             vehicle_hide_standard: Vec::new(),
             vehicle_defaults_seeded: false,
+            flight_defaults_seeded: false,
             analog_movement: false,
             sprint_button: true,
             sprint_toggle: false,
@@ -681,6 +685,7 @@ impl Settings {
             custom_buttons: Self::default_goy_buttons(),
             vehicle_hide_standard: Vec::new(),
             vehicle_defaults_seeded: false,
+            flight_defaults_seeded: false,
             ..Self::default()
         };
         for c in Control::ALL {
@@ -730,6 +735,10 @@ impl Settings {
         let room = 32usize.saturating_sub(self.custom_buttons.len());
         self.custom_buttons
             .extend(Self::default_minecart_buttons().into_iter().take(room));
+        self.flight_defaults_seeded = true;
+        let room = 32usize.saturating_sub(self.custom_buttons.len());
+        self.custom_buttons
+            .extend(Self::default_flight_buttons().into_iter().take(room));
     }
     /// Adds the built-in vehicle layouts once, so existing saves get them too.
     pub fn seed_vehicle_defaults(&mut self) {
@@ -752,6 +761,17 @@ impl Settings {
             {
                 s.vehicle_hide_standard.push("minecart".into());
                 s.custom_buttons.extend(Self::default_minecart_buttons());
+            }
+        }
+        if !s.flight_defaults_seeded {
+            s.flight_defaults_seeded = true;
+            if !s
+                .custom_buttons
+                .iter()
+                .any(|b| b.vehicle == "fly" || b.vehicle == "swim")
+                && s.custom_buttons.len() + 4 <= 32
+            {
+                s.custom_buttons.extend(Self::default_flight_buttons());
             }
         }
     }
@@ -1508,6 +1528,38 @@ impl Settings {
         vec![
             make("Forward", "key.keyboard.w", "up", 0.58),
             make("Back", "key.keyboard.s", "down", 0.80),
+        ]
+    }
+    /// Flying and swimming: Ascend and Descend replace Jump and Sneak, smaller than Jump.
+    pub fn default_flight_buttons() -> Vec<super::CustomButton> {
+        let make = |context: &str, label: &str, key: &str, icon: &str, y: f32| {
+            let mut button = super::CustomButton::new(key.into(), 0);
+            button.custom_label = label.into();
+            button.icon = icon.into();
+            button.vehicle = context.into();
+            for placement in &mut button.layouts {
+                placement.center = [0.90, y];
+                placement.size = 0.10;
+            }
+            button
+        };
+        vec![
+            make("fly", "Ascend", "key.keyboard.space", "flyingascend", 0.60),
+            make(
+                "fly",
+                "Descend",
+                "key.keyboard.left.shift",
+                "flyingdescend",
+                0.78,
+            ),
+            make("swim", "Ascend", "key.keyboard.space", "waterascend", 0.60),
+            make(
+                "swim",
+                "Descend",
+                "key.keyboard.left.shift",
+                "waterdescend",
+                0.78,
+            ),
         ]
     }
     pub fn default_goy_buttons() -> Vec<super::CustomButton> {

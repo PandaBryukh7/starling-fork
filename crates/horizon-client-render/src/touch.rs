@@ -529,8 +529,33 @@ impl TouchControls {
             (p.opacity * self.hud_opacity_scale.clamp(0.0, 1.0)).clamp(0.0, 1.0)
         }
     }
+    /// Ascend/Descend replace the ground's Sneak spot (the D-pad's centre) while flying or swimming.
+    fn flight_split(&self) -> bool {
+        self.editor.is_none() && !self.mounted && (self.vertical_movement || self.swimming)
+    }
     pub fn placement(&self, c: Control) -> layout::Placement {
         let mut p = self.settings.placement(c);
+        if c == Control::Sneak && self.flight_split() {
+            // Flying or swimming: Jump and Sneak become Ascend and Descend, one above the other
+            // on the Jump button's spot, wherever the player put Sneak on the ground.
+            let mut q = self.settings.placement(Control::Jump);
+            let step = q.size
+                * if q.height_ratio.is_finite() {
+                    q.height_ratio.max(0.05)
+                } else {
+                    1.0
+                }
+                * 1.08;
+            q.center[1] += if q.center[1] + step + q.size * 0.5 <= 1.0 {
+                step
+            } else {
+                -step
+            };
+            q.toggleable = false;
+            q.passthrough = false;
+            q.swipeable = false;
+            return q;
+        }
         let factory_swap = c == Control::Offhand
             && self.settings.layouts[self.settings.mode.index()][c as usize].center == [0.80, 0.96]
             && p.size == 0.075;
@@ -1020,6 +1045,22 @@ impl TouchControls {
                         Role::Ignore
                     }
                 }
+                Some(Control::Sneak)
+                    if self.placement(Control::Sneak).toggleable && !self.mounted =>
+                {
+                    // On the ground, Bedrock's Sneak latches on a double tap and unlatches the same way.
+                    let now = Instant::now();
+                    if self
+                        .last_sneak_tap
+                        .take()
+                        .is_some_and(|t| now.duration_since(t) < Duration::from_millis(300))
+                    {
+                        self.latched_controls ^= 1 << (Control::Sneak as u16);
+                    } else {
+                        self.last_sneak_tap = Some(now);
+                    }
+                    Role::Ignore
+                }
                 Some(Control::Sprint)
                     if self.settings.sprint_toggle
                         || self.placement(Control::Sprint).toggleable =>
@@ -1188,6 +1229,7 @@ impl TouchControls {
         if self.latched_controls != 0 {
             for c in Control::ALL {
                 if (self.latched_controls & (1 << (c as u16))) != 0
+                    && !(c == Control::Sneak && (self.vertical_movement || self.swimming))
                     && let Some(bt) = Self::button(c)
                 {
                     match bt {

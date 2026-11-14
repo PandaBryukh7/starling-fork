@@ -732,64 +732,37 @@ impl Settings {
         self.custom_buttons.retain(|b| b.vehicle.is_empty());
         self.vehicle_hide_standard = vec!["minecart".into()];
         self.vehicle_defaults_seeded = true;
-        let room = 32usize.saturating_sub(self.custom_buttons.len());
-        self.custom_buttons
-            .extend(Self::default_minecart_buttons().into_iter().take(room));
         self.flight_defaults_seeded = true;
         let room = 32usize.saturating_sub(self.custom_buttons.len());
-        self.custom_buttons
-            .extend(Self::default_flight_buttons().into_iter().take(room));
+        let flight = self.default_flight_buttons();
+        self.custom_buttons.extend(flight.into_iter().take(room));
     }
     /// Adds the built-in vehicle layouts once, so existing saves get them too.
     pub fn seed_vehicle_defaults(&mut self) {
         let s = self;
-        // Saves made before the arrow icons existed.
-        for button in &mut s.custom_buttons {
-            if button.vehicle == "minecart" && button.icon.is_empty() {
-                match (button.key.as_str(), button.custom_label.as_str()) {
-                    ("key.keyboard.w", "Forward") => button.icon = "up".into(),
-                    ("key.keyboard.s", "Back") => button.icon = "down".into(),
-                    _ => {}
-                }
-            }
-        }
-        // Swimming shares the flying buttons now.
-        s.custom_buttons.retain(|b| b.vehicle != "swim");
-        // The first minecart layout (steering on the right, no Dismount button).
-        if s.custom_buttons.iter().any(|b| b.vehicle == "minecart")
-            && !s
-                .custom_buttons
-                .iter()
-                .any(|b| b.vehicle == "minecart" && b.key == "key.keyboard.left.shift")
-            && s.custom_buttons
-                .iter()
-                .filter(|b| b.vehicle == "minecart")
-                .all(|b| {
-                    matches!(b.key.as_str(), "key.keyboard.w" | "key.keyboard.s")
-                        && (b.layouts[0].center[0] - 0.82).abs() < 0.001
-                })
-        {
-            s.custom_buttons.retain(|b| b.vehicle != "minecart");
-            if s.custom_buttons.len() + 3 <= 32 {
-                s.custom_buttons.extend(Self::default_minecart_buttons());
-            }
-        }
+        // Earlier built-in layouts: swimming had buttons of its own, the minecart had Forward,
+        // Back and Dismount buttons, and flying had an Ascend button. Jump and the D-pad do
+        // those jobs now.
+        s.custom_buttons.retain(|b| {
+            let built_in = |key: &str, label: &str| b.key == key && b.custom_label == label;
+            !(b.vehicle == "swim"
+                || (b.vehicle == "minecart"
+                    && (built_in("key.keyboard.w", "Forward")
+                        || built_in("key.keyboard.s", "Back")
+                        || built_in("key.keyboard.left.shift", "Dismount")))
+                || (b.vehicle == "fly" && built_in("key.keyboard.space", "Ascend")))
+        });
         if !s.vehicle_defaults_seeded {
             s.vehicle_defaults_seeded = true;
-            if !s.vehicle_hide_standard.iter().any(|v| v == "minecart")
-                && !s.custom_buttons.iter().any(|b| b.vehicle == "minecart")
-                && s.custom_buttons.len() + 3 <= 32
-            {
+            if !s.vehicle_hide_standard.iter().any(|v| v == "minecart") {
                 s.vehicle_hide_standard.push("minecart".into());
-                s.custom_buttons.extend(Self::default_minecart_buttons());
             }
         }
         if !s.flight_defaults_seeded {
             s.flight_defaults_seeded = true;
-            if !s.custom_buttons.iter().any(|b| b.vehicle == "fly")
-                && s.custom_buttons.len() + 2 <= 32
-            {
-                s.custom_buttons.extend(Self::default_flight_buttons());
+            if !s.custom_buttons.iter().any(|b| b.vehicle == "fly") && s.custom_buttons.len() < 32 {
+                let flight = s.default_flight_buttons();
+                s.custom_buttons.extend(flight);
             }
         }
     }
@@ -1530,49 +1503,32 @@ impl Settings {
     /// Builds the super-optimized default GoyControl button layout (static buttons, no icons,
     /// custom stroke/shadow/roundness, comfortable touch sizes, dedicated Mouse button, and
     /// smart `visible_in_game` / `visible_in_menu` defaults).
-    /// A minecart needs only forward and back; the dismount button stays.
-    pub fn default_minecart_buttons() -> Vec<super::CustomButton> {
-        let make = |label: &str, key: &str, icon: &str, x: f32, y: f32| {
-            let mut button = super::CustomButton::new(key.into(), 0);
-            button.custom_label = label.into();
-            button.icon = icon.into();
-            button.vehicle = "minecart".into();
-            for placement in &mut button.layouts {
-                placement.center = [x, y];
-                placement.size = 0.13;
-            }
-            button
-        };
-        // Steering where the D-pad is, getting off on the right, as in Bedrock.
-        vec![
-            make("Forward", "key.keyboard.w", "up", 0.13, 0.60),
-            make("Back", "key.keyboard.s", "down", 0.13, 0.82),
-            make(
-                "Dismount",
-                "key.keyboard.left.shift",
-                "dismount",
-                0.90,
-                0.78,
-            ),
-        ]
-    }
-    /// Flying and swimming share one Ascend/Descend pair that replaces Jump and Sneak.
-    pub fn default_flight_buttons() -> Vec<super::CustomButton> {
-        let make = |label: &str, key: &str, icon: &str, y: f32| {
-            let mut button = super::CustomButton::new(key.into(), 0);
-            button.custom_label = label.into();
-            button.icon = icon.into();
-            button.vehicle = "fly".into();
-            for placement in &mut button.layouts {
-                placement.center = [0.90, y];
-                placement.size = 0.10;
-            }
-            button
-        };
-        vec![
-            make("Ascend", "key.keyboard.space", "flyingascend", 0.60),
-            make("Descend", "key.keyboard.left.shift", "flyingdescend", 0.78),
-        ]
+    /// Flying and swimming: Jump turns into Ascend by itself; only Descend needs a button, the
+    /// size of Jump and just below it (above it when there is no room).
+    pub fn default_flight_buttons(&self) -> Vec<super::CustomButton> {
+        let mut button = super::CustomButton::new("key.keyboard.left.shift".into(), 0);
+        button.custom_label = "Descend".into();
+        button.icon = "flyingdescend".into();
+        button.vehicle = "fly".into();
+        for (mode, placement) in button.layouts.iter_mut().enumerate() {
+            let jump = self.layouts[mode][Control::Jump as usize];
+            let hr = if jump.height_ratio.is_finite() && jump.height_ratio > 0.05 {
+                jump.height_ratio
+            } else {
+                1.0
+            };
+            let step = jump.size * hr * 1.08;
+            *placement = jump;
+            placement.toggleable = false;
+            placement.passthrough = false;
+            placement.swipeable = false;
+            placement.center[1] = if jump.center[1] + step + jump.size * hr * 0.5 <= 1.0 {
+                jump.center[1] + step
+            } else {
+                jump.center[1] - step
+            };
+        }
+        vec![button]
     }
     pub fn default_goy_buttons() -> Vec<super::CustomButton> {
         #[allow(clippy::too_many_arguments)]

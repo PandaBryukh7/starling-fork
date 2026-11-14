@@ -173,7 +173,31 @@ impl Game<'_> {
     }
     pub(super) fn android_custom_events(&mut self) {
         for (name, down) in self.pad.touch.key_events() {
+            if down
+                && name == "key.keyboard.left.shift"
+                && self.pad.touch.vehicle == "fly"
+                && self.player.as_ref().is_some_and(|p| p.flying)
+            {
+                // A double tap on Descend ends flight like a double tap on Ascend does.
+                let now = Instant::now();
+                if self
+                    .pad
+                    .descend_tap
+                    .take()
+                    .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(300))
+                {
+                    self.pad.fly_off = Some((self.ticks, 0));
+                } else {
+                    self.pad.descend_tap = Some(now);
+                }
+            }
             self.android_custom_token_edge(&name, down);
+        }
+        if let Some((tick, step)) = self.pad.fly_off
+            && (step == 0 || self.ticks > tick)
+        {
+            self.android_dispatch_custom_token("key.keyboard.space", step % 2 == 0);
+            self.pad.fly_off = (step < 3).then_some((self.ticks, step + 1));
         }
     }
 

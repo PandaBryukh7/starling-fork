@@ -32,6 +32,12 @@ pub(super) struct Pads {
     pub(super) custom_pressed_at: std::collections::HashMap<String, u64>,
     #[cfg(target_os = "android")]
     pub(super) late_custom_releases: Vec<String>,
+    /// The last Descend tap, and the double jump (next step, tick of the last one) that a second
+    /// tap sends to end creative flight.
+    #[cfg(target_os = "android")]
+    pub(super) descend_tap: Option<Instant>,
+    #[cfg(target_os = "android")]
+    pub(super) fly_off: Option<(u64, u8)>,
     #[cfg(target_os = "android")]
     pub(super) hardware_keys: std::collections::HashSet<KeyCode>,
     #[cfg(target_os = "android")]

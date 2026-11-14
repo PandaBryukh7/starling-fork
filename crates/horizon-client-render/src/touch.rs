@@ -484,27 +484,23 @@ impl TouchControls {
         if self.editor.is_none()
             && self.hides_standard()
             && !Self::auxiliary_control(c)
-            && !(c == Control::Sneak
-                && !self
-                    .settings
-                    .custom_buttons
-                    .iter()
-                    .any(|b| b.vehicle == self.vehicle && b.key == "key.keyboard.left.shift"))
+            && !matches!(c, Control::Move | Control::Jump)
         {
-            // Dismounting (Sneak) and the menu buttons always remain.
+            // Steering stays on the D-pad and Jump turns into the dismount button, as in Bedrock;
+            // the menu buttons always remain.
             return false;
         }
         if self.editor.is_none()
-            && matches!(c, Control::Jump | Control::Sneak)
+            && c == Control::Sneak
             && !self.mounted
             && self.vehicle == "fly"
             && self
                 .settings
                 .custom_buttons
                 .iter()
-                .any(|b| b.vehicle == self.vehicle)
+                .any(|b| b.vehicle == "fly")
         {
-            // Flying and swimming have Ascend and Descend buttons of their own.
+            // Flying and swimming have a Descend button of their own; Jump is Ascend.
             return false;
         }
         if c == Control::Shield && !self.shield_available && self.editor.is_none() {
@@ -780,10 +776,13 @@ impl TouchControls {
                     Control::Sprint => "ui/sprint",
                     Control::Attack => "ui/attack",
                     Control::Use => "ui/interact",
-                    Control::Jump if self.swimming => "controls/waterascend",
-                    Control::Sneak if self.swimming => "controls/waterdescend",
-                    Control::Jump if self.vertical_movement => "controls/flyingascend",
-                    Control::Sneak if self.vertical_movement => "controls/flyingdescend",
+                    Control::Jump if self.mounted && self.hides_standard() => "controls/dismount",
+                    Control::Jump if self.swimming || self.vertical_movement => {
+                        "controls/flyingascend"
+                    }
+                    Control::Sneak if self.swimming || self.vertical_movement => {
+                        "controls/flyingdescend"
+                    }
                     Control::Sneak if self.mounted => "controls/dismount",
                     Control::Jump if self.settings.mode == Mode::Dpad => "controls/jump_dpad",
                     Control::Sneak if self.settings.mode == Mode::Dpad => "controls/sneak_dpad",
@@ -1037,6 +1036,10 @@ impl TouchControls {
                         self.last_sneak_tap = Some(now);
                         Role::Ignore
                     }
+                }
+                Some(Control::Jump) if self.mounted && self.hides_standard() => {
+                    // In a minecart Jump is the dismount button.
+                    Self::button(Control::Sneak).map_or(Role::Ignore, Role::Button)
                 }
                 Some(Control::Sneak) if self.mounted => {
                     // Dismounting is a plain press, never a latched crouch.
@@ -1654,10 +1657,9 @@ pub fn draw_single_mcpe_control(
         Control::Sprint => "ui/sprint",
         Control::Attack => "ui/attack",
         Control::Use => "ui/interact",
-        Control::Jump if tc.swimming => "controls/waterascend",
-        Control::Sneak if tc.swimming => "controls/waterdescend",
-        Control::Jump if tc.vertical_movement => "controls/flyingascend",
-        Control::Sneak if tc.vertical_movement => "controls/flyingdescend",
+        Control::Jump if tc.mounted && tc.hides_standard() => "controls/dismount",
+        Control::Jump if tc.swimming || tc.vertical_movement => "controls/flyingascend",
+        Control::Sneak if tc.swimming || tc.vertical_movement => "controls/flyingdescend",
         Control::Sneak if tc.mounted => "controls/dismount",
         Control::Jump if tc.settings.mode == Mode::Dpad => "controls/jump_dpad",
         Control::Sneak if tc.settings.mode == Mode::Dpad => "controls/sneak_dpad",

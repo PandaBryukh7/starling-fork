@@ -544,6 +544,13 @@ impl TouchControls {
         }
     }
     pub fn placement(&self, c: Control) -> layout::Placement {
+        let mut p = self.placement_base(c);
+        if c == Control::Jump {
+            p.center[1] -= self.flight_push();
+        }
+        p
+    }
+    fn placement_base(&self, c: Control) -> layout::Placement {
         let mut p = self.settings.placement(c);
         let factory_swap = c == Control::Offhand
             && self.settings.layouts[self.settings.mode.index()][c as usize].center == [0.80, 0.96]

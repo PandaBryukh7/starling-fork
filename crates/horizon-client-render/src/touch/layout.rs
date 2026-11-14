@@ -1504,7 +1504,7 @@ impl Settings {
     /// custom stroke/shadow/roundness, comfortable touch sizes, dedicated Mouse button, and
     /// smart `visible_in_game` / `visible_in_menu` defaults).
     /// Flying and swimming: Jump turns into Ascend by itself; only Descend needs a button, the
-    /// size of Jump and just below it (above it when there is no room).
+    /// size of Jump and just below it (the pair is pushed up on screen when there is no room).
     pub fn default_flight_buttons(&self) -> Vec<super::CustomButton> {
         let mut button = super::CustomButton::new("key.keyboard.left.shift".into(), 0);
         button.custom_label = "Descend".into();
@@ -1522,11 +1522,8 @@ impl Settings {
             placement.toggleable = false;
             placement.passthrough = false;
             placement.swipeable = false;
-            placement.center[1] = if jump.center[1] + step + jump.size * hr * 0.5 <= 1.0 {
-                jump.center[1] + step
-            } else {
-                jump.center[1] - step
-            };
+            // Below Jump even when that runs off the screen: the pair is pushed up at draw time.
+            placement.center[1] = jump.center[1] + step;
         }
         vec![button]
     }

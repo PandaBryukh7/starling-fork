@@ -268,7 +268,39 @@ impl TouchControls {
         if self.settings.left_handed {
             p.center[0] = 1.0 - p.center[0];
         }
+        if btn.vehicle == "fly" && btn.key == "key.keyboard.left.shift" {
+            p.center[1] -= self.flight_push();
+        }
         self.fit_placement(p)
+    }
+    /// How far (of the screen's height) the Jump and Descend pair is pushed up so that Descend,
+    /// stacked under Jump, stays on screen. Only what is drawn and touched moves: the saved
+    /// positions stay, so the buttons go back when they fit again. Not applied in the editor.
+    pub fn flight_push(&self) -> f32 {
+        if self.editor.is_some() {
+            return 0.0;
+        }
+        let mode = self.settings.mode.index();
+        let Some(descend) = self
+            .settings
+            .custom_buttons
+            .iter()
+            .find(|b| b.vehicle == "fly" && b.key == "key.keyboard.left.shift")
+        else {
+            return 0.0;
+        };
+        let scaled = |mut p: Placement| {
+            p.size *= self.settings.button_scale;
+            p.rect(self.aspect())
+        };
+        let d = scaled(descend.layouts[mode]);
+        let j = scaled(self.settings.layouts[mode][Control::Jump as usize]);
+        let stacked = d[0] < j[0] + j[2] && j[0] < d[0] + d[2] && d[1] > j[1];
+        if stacked {
+            (d[1] + d[3] - 1.0).max(0.0)
+        } else {
+            0.0
+        }
     }
     pub fn custom_visible_for_state(&self, index: usize, in_menu: bool) -> bool {
         let Some(button) = self.settings.custom_buttons.get(index) else {

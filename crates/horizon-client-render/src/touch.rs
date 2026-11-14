@@ -484,7 +484,12 @@ impl TouchControls {
         if self.editor.is_none()
             && self.hides_standard()
             && !Self::auxiliary_control(c)
-            && c != Control::Sneak
+            && !(c == Control::Sneak
+                && !self
+                    .settings
+                    .custom_buttons
+                    .iter()
+                    .any(|b| b.vehicle == self.vehicle && b.key == "key.keyboard.left.shift"))
         {
             // Dismounting (Sneak) and the menu buttons always remain.
             return false;
@@ -492,7 +497,7 @@ impl TouchControls {
         if self.editor.is_none()
             && matches!(c, Control::Jump | Control::Sneak)
             && !self.mounted
-            && (self.vehicle == "fly" || self.vehicle == "swim")
+            && self.vehicle == "fly"
             && self
                 .settings
                 .custom_buttons

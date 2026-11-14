@@ -15143,10 +15143,8 @@ impl Game<'_> {
                 self.pad.touch.mounted = self.riding.is_some();
                 self.pad.touch.vehicle = self.touch_vehicle_kind();
                 if self.pad.touch.vehicle.is_empty() {
-                    if self.pad.touch.vertical_movement {
+                    if self.pad.touch.vertical_movement || self.pad.touch.swimming {
                         self.pad.touch.vehicle = "fly".into();
-                    } else if self.pad.touch.swimming {
-                        self.pad.touch.vehicle = "swim".into();
                     }
                 }
                 self.pad.touch.shield_available = self.touch_shield_available();
